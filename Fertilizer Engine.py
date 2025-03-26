@@ -629,6 +629,16 @@ current_time_date = datetime.now(current_timezone)
 formatted_today = format_datetime(current_time_date)
 
 # %%
+def _on_mousewheel(event, canvas):
+    """Handles mouse wheel scrolling on the canvas."""
+    # Determine scroll direction and amount based on platform
+    if event.num == 4:  # Linux scroll up
+        canvas.yview_scroll(-1, "units")
+    elif event.num == 5:  # Linux scroll down
+        canvas.yview_scroll(1, "units")
+    else:  # Windows/macOS scroll
+        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
 def load_database(sheet_url, json_path):
     """Loads data from the Google Sheet into a Pandas DataFrame."""
     try:
@@ -720,6 +730,13 @@ def show_rainfall_options():
 
     if not root_exists:
         return
+    
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
 
     hide_all_widgets()
     current_menu = "rainfall"
@@ -748,6 +765,14 @@ def goto_update_rainfall():
     global previous_menu
     if not root_exists:
         return
+    
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
+    
     print(f"Selected Rainfall Option: Update Data Hujan Terakhir")
     previous_menu = "rainfall"
     show_estate_options()
@@ -756,6 +781,13 @@ def show_estate_options():
     global label_estate_option, combobox_estate, submit_estate_button, back_button, current_menu, main_menu_button, df
     if not root_exists:
         return
+
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
 
     hide_all_widgets()
 
@@ -778,6 +810,14 @@ def goto_add_rainfall():
     global previous_menu
     if not root_exists:
         return
+    
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
+    
     print(f"Selected Rainfall Option: Masukkan Data Hujan Baru")
     show_estate_options_for_add_rainfall()
 
@@ -820,6 +860,14 @@ def display_analysis_results(selected_estate, nama_blok, tanggal_rencana, peilsc
            label_rencana_jenis_value, back_to_main_button, reanalyze_button  # Add reanalyze_button
 
     if not root_exists: return
+
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
+
     hide_all_widgets()
     current_menu = "analysis_results"
 
@@ -883,6 +931,13 @@ def show_estate_options_for_analysis():
 
     if not root_exists:
         return
+
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
 
     hide_all_widgets()
     current_menu = "estate_analysis"
@@ -1212,6 +1267,13 @@ def show_add_rainfall_entry(selected_estate, date):
 
     if not root_exists: return # Added check
 
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
+
     hide_all_widgets()
     # Make sure previous_menu is set correctly before calling this function
     # If coming from submit_missing_dates, previous_menu should ideally be set
@@ -1421,10 +1483,14 @@ def create_main_widgets():
 
     current_menu = "main"
 
-    # --- COLUMN CONFIGURATION (Add Reset for Column 1) ---
-    root.columnconfigure(0, weight=1)
-    root.columnconfigure(1, weight=0) # <<< ADD THIS LINE
-    # --- END COLUMN CONFIGURATION ---
+    # --- ROW & COLUMN CONFIGURATION RESET (Add/Modify) ---
+    # Reset previous configurations first (important!)
+    # Loop through likely rows used by other screens (adjust range if needed)
+    for i in range(20): # Reset a generous number of rows (e.g., 0-19)
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # This screen uses column 0
+    root.columnconfigure(1, weight=0) # Ensure column 1 is reset
+    # --- END CONFIGURATION ---
 
     # Update the dataframe every time user access the main menu
     df = load_database(sheet_url, json_path)  #You already had this, keep it
@@ -1468,6 +1534,13 @@ def goto_input_hujan():
     global previous_menu, entry_username
     if not root_exists: return
 
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
+
     # Check username for the first time
     username = entry_username.get()
     if not username.strip():
@@ -1482,6 +1555,13 @@ def goto_analisa_pemupukan():
     global previous_menu, entry_username
     if not root_exists: return
 
+    # --- ROW & COLUMN CONFIGURATION RESET ---
+    for i in range(20): # Reset rows
+        root.rowconfigure(i, weight=0)
+    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
+    root.columnconfigure(1, weight=0) # Reset unused columns
+    # --- END CONFIGURATION ---
+
     # Check username for the first time
     username = entry_username.get()
     if not username.strip():
@@ -1493,48 +1573,101 @@ def goto_analisa_pemupukan():
     show_estate_options_for_analysis()
 
 def show_missing_dates_input(selected_estate, missing_dates_list):
-    """Displays the screen to input rainfall for missing dates."""
-    global missing_dates_widgets, label_missing_dates_title, submit_missing_dates_button, back_button, main_menu_button, previous_menu, current_menu
+    """Displays the screen to input rainfall for missing dates with scrolling."""
+    # Keep existing global declarations, add new ones if needed for frame/canvas
+    global missing_dates_widgets, label_missing_dates_title, submit_missing_dates_button, \
+           back_button, main_menu_button, previous_menu, current_menu, \
+           canvas, scrollbar, inner_frame # Add canvas, scrollbar, inner_frame
 
     if not root_exists:
         return
 
     hide_all_widgets()
     current_menu = "missing_dates_input"
-    previous_menu = "estate_add_rainfall" # Came from estate selection
+    previous_menu = "estate_add_rainfall"
 
-    missing_dates_widgets = {} # Clear previous widgets
+    # Reset column configurations for the root window (important!)
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0) # Reset column 1
 
+    # --- Title (Outside Scrollable Area) ---
     label_missing_dates_title = tk.Label(root, text=f"Masukkan data hujan untuk tanggal yang hilang ({selected_estate}):", font=("Arial", 12, "bold"))
-    label_missing_dates_title.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+    label_missing_dates_title.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
 
-    row_num = 1
+    # --- Create Scrollable Area ---
+    # 1. Outer frame to hold canvas and scrollbar
+    outer_frame = tk.Frame(root)
+    outer_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5) # Place outer frame
+    outer_frame.grid_rowconfigure(0, weight=1)
+    outer_frame.grid_columnconfigure(0, weight=1)
+
+    # 2. Canvas Widget
+    canvas = tk.Canvas(outer_frame)
+    canvas.grid(row=0, column=0, sticky="nsew")
+
+    # 3. Scrollbar
+    scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
+    scrollbar.grid(row=0, column=1, sticky="ns")
+
+    # 4. Configure Canvas
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox("all"))) # Update scroll region when canvas size changes
+
+    # 5. Inner Frame inside Canvas
+    inner_frame = tk.Frame(canvas)
+    canvas.create_window((0, 0), window=inner_frame, anchor="nw")
+
+    # --- Bind Mouse Wheel ---
+    # Bind to both canvas and inner_frame for broader compatibility
+    canvas.bind_all("<MouseWheel>", lambda event: _on_mousewheel(event, canvas)) # Windows/macOS
+    canvas.bind_all("<Button-4>", lambda event: _on_mousewheel(event, canvas))   # Linux scroll up
+    canvas.bind_all("<Button-5>", lambda event: _on_mousewheel(event, canvas))   # Linux scroll down
+    inner_frame.bind("<MouseWheel>", lambda event: _on_mousewheel(event, canvas))
+    inner_frame.bind("<Button-4>", lambda event: _on_mousewheel(event, canvas))
+    inner_frame.bind("<Button-5>", lambda event: _on_mousewheel(event, canvas))
+
+
+    # --- Populate Inner Frame with Widgets ---
+    missing_dates_widgets = {} # Clear previous widgets
+    row_num = 0
     for date in missing_dates_list:
-        date_str = format_datetime(date.date())
-        label = tk.Label(root, text=f"Tanggal {date_str} (mm):", font=("Arial", 10))
-        label.grid(row=row_num, column=0, padx=10, pady=5, sticky="w")
+        date_obj = date.date() # Use date object for key
+        date_str = format_datetime(date_obj)
 
-        entry = tk.Entry(root, font=("Arial", 10))
-        entry.grid(row=row_num, column=1, padx=10, pady=5, sticky="ew")
+        # Place label and entry INSIDE inner_frame
+        label = tk.Label(inner_frame, text=f"Tanggal {date_str} (mm):", font=("Arial", 10))
+        label.grid(row=row_num, column=0, padx=5, pady=2, sticky="w")
 
-        missing_dates_widgets[date.date()] = {"label": label, "entry": entry} # Store by date object
+        entry = tk.Entry(inner_frame, font=("Arial", 10))
+        entry.grid(row=row_num, column=1, padx=5, pady=2, sticky="ew")
+
+        missing_dates_widgets[date_obj] = {"label": label, "entry": entry}
         row_num += 1
+
+    # Configure inner_frame columns
+    inner_frame.columnconfigure(1, weight=1) # Make entry column expandable
+
+    # --- Buttons (Outside Scrollable Area) ---
+    # Place buttons on the root window below the outer_frame
+    button_row = 2 # Start buttons on row 2 of the root window
 
     submit_missing_dates_button = tk.Button(root, text="Submit Data Hilang",
                                             command=lambda: submit_missing_dates(selected_estate, missing_dates_list),
                                             font=("Arial", 10), bg=primary_button_color, fg=button_text_color)
-    submit_missing_dates_button.grid(row=row_num, column=0, columnspan=2, padx=10, pady=15)
-    row_num += 1
+    submit_missing_dates_button.grid(row=button_row, column=0, padx=10, pady=10)
+    button_row += 1
 
     back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color)
-    back_button.grid(row=row_num, column=0, columnspan=2, padx=10, pady=5)
-    row_num += 1
+    back_button.grid(row=button_row, column=0, padx=10, pady=5)
+    button_row += 1
 
     main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color)
-    main_menu_button.grid(row=row_num, column=0, columnspan=2, padx=10, pady=5)
+    main_menu_button.grid(row=button_row, column=0, padx=10, pady=5)
 
-    root.columnconfigure(0, weight=1)
-    root.columnconfigure(1, weight=1)
+    # --- Configure Root Window Rows for Proper Resizing ---
+    root.grid_rowconfigure(0, weight=0)  # Title row - no expansion
+    root.grid_rowconfigure(1, weight=1)  # Row containing the scrollable area - expands
+    root.grid_rowconfigure(button_row, weight=0) # Last button row - no expansion
 
 def submit_missing_dates(selected_estate, missing_dates_list):
     """Processes the input for missing rainfall dates."""
