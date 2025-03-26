@@ -100,11 +100,6 @@ exit_button_color = "#f44336" # Red
 text_color = "#000000" # Black
 button_text_color = "#ffffff"  # White
 
-# %%
-current_timezone = pytz.timezone('Asia/Jakarta')
-current_time_date = datetime.now(current_timezone)
-formatted_today = format_datetime(current_time_date)
-
 # %% [markdown]
 # # Functions
 
@@ -629,6 +624,11 @@ df.dropna(subset=['Date'], inplace=True)
 # # GUI
 
 # %%
+current_timezone = pytz.timezone('Asia/Jakarta')
+current_time_date = datetime.now(current_timezone)
+formatted_today = format_datetime(current_time_date)
+
+# %%
 def load_database(sheet_url, json_path):
     """Loads data from the Google Sheet into a Pandas DataFrame."""
     try:
@@ -724,6 +724,12 @@ def show_rainfall_options():
     hide_all_widgets()
     current_menu = "rainfall"
     previous_menu = "main"
+
+    # --- COLUMN CONFIGURATION (Add Reset for Column 1) ---
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0) # <<< ADD THIS LINE
+    # --- END COLUMN CONFIGURATION ---
+
     label_rainfall_option = tk.Label(root, text="Pilih Opsi Untuk Data Hujan:", font=("Arial", 12))
     label_rainfall_option.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
@@ -1119,6 +1125,11 @@ def show_estate_options_for_add_rainfall():
     current_menu = "estate_add_rainfall"
     previous_menu = "rainfall"
 
+    # --- COLUMN CONFIGURATION (Add Reset for Column 1) ---
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0) # <<< ADD THIS LINE
+    # --- END COLUMN CONFIGURATION ---
+
     label_estate_option = tk.Label(root, text="Pilih estate (Inti/Plasma):", font=("Arial", 12))
     label_estate_option.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
@@ -1207,6 +1218,11 @@ def show_add_rainfall_entry(selected_estate, date):
     # to 'missing_dates_input' or similar before calling this.
     # Let's set it here for now if it wasn't set properly before.
     previous_menu = "missing_dates_input" # Or adjust based on actual flow
+
+    # --- COLUMN CONFIGURATION (Add Reset for Column 1) ---
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0) # <<< ADD THIS LINE
+    # --- END COLUMN CONFIGURATION ---
 
     # --- FIX THE LABEL TEXT ---
     label_daily_rainfall = tk.Label(root, text=f"Masukkan Data Hujan (mm) untuk {selected_estate} pada tanggal {format_datetime(date)}:", font=("Arial", 12))
@@ -1404,6 +1420,11 @@ def create_main_widgets():
     root.geometry("500x400")
 
     current_menu = "main"
+
+    # --- COLUMN CONFIGURATION (Add Reset for Column 1) ---
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0) # <<< ADD THIS LINE
+    # --- END COLUMN CONFIGURATION ---
 
     # Update the dataframe every time user access the main menu
     df = load_database(sheet_url, json_path)  #You already had this, keep it
