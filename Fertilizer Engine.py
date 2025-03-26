@@ -12,6 +12,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
+import datetime as dt
 from oauth2client.service_account import ServiceAccountCredentials
 import tkinter as tk
 from tkinter import ttk, messagebox, StringVar
@@ -92,35 +93,93 @@ fertilizer_type = ["NPK 13", "NPK 15", "NPK 12", "Dolomite", "Urea", "MOP", "HGF
 
 # %%
 border_line = "=================================================================================="
+primary_button_color = "#4CAF50"  # Green
+secondary_button_color = "#2196F3"  # Blue
+main_menu_button_color = "#f44336"  # Red
+exit_button_color = "#f44336" # Red
+text_color = "#000000" # Black
+button_text_color = "#ffffff"  # White
 
 # %%
 current_timezone = pytz.timezone('Asia/Jakarta')
-date_input = datetime.now(current_timezone)
-current_time_date = datetime.now(current_timezone).date()
+current_time_date = datetime.now(current_timezone)
+formatted_today = format_datetime(current_time_date)
 
 # %% [markdown]
 # # Functions
 
 # %%
-def get_missing_dates(df, estate_name, current_time_date):
-  # Filter the DataFrame to include only records for the specified estate
-  estate_data = df[(df['Estate'] == estate_name)]
+def get_missing_dates(df, estate_name, current_time_date): # current_time_date is tz-aware datetime.datetime
+    """Calculates the missing dates for a given estate."""
+    global current_timezone
 
-  # Get the last reported time
-  if not estate_data.empty:
-    last_reported_time = estate_data['Date'].iloc[-1].date()
-  else:
-    last_reported_time = None  # Return None if no data found for the estate
+    # Filter and sort data
+    estate_data = df[(df['Estate'] == estate_name)].sort_values(by='Date')
 
-  # Check for missing dates between the last reported time and the current time
-  if last_reported_time:
-    missing_dates = pd.date_range(last_reported_time + pd.Timedelta(days=1), current_time_date - pd.Timedelta(days=1))
+    if estate_data.empty:
+        print(f"No previous data found for {estate_name}. Cannot determine missing dates.")
+        return pd.DatetimeIndex([]), None, 0
+
+    # --- Ensure 'Date' column is datetime ---
+    # ... (Keep the robust datetime conversion block from the previous step) ...
+    if not pd.api.types.is_datetime64_any_dtype(estate_data['Date']):
+        try:
+            estate_data = estate_data.assign(Date=pd.to_datetime(estate_data['Date'], errors='coerce'))
+            estate_data = estate_data.dropna(subset=['Date'])
+        except Exception as e:
+            print(f"Error converting 'Date' column to datetime for {estate_name}: {e}")
+            return pd.DatetimeIndex([]), None, 0
+        if estate_data.empty:
+            print(f"No valid dates found for {estate_name} after conversion.")
+            return pd.DatetimeIndex([]), None, 0
+    # --- End datetime check ---
+
+    last_reported_timestamp_naive = estate_data['Date'].iloc[-1]
+
+    # --- Make last_reported_timestamp timezone-aware ---
+    try:
+        if last_reported_timestamp_naive.tzinfo is None:
+            last_reported_time_aware = last_reported_timestamp_naive.tz_localize(current_timezone)
+        elif last_reported_timestamp_naive.tzinfo == current_timezone:
+            last_reported_time_aware = last_reported_timestamp_naive
+        else:
+            last_reported_time_aware = last_reported_timestamp_naive.tz_convert(current_timezone)
+            print(f"Warning: Converted last reported time from {last_reported_timestamp_naive.tzinfo} to {current_timezone}")
+    except Exception as e:
+        print(f"Error handling timezone for last reported date ({last_reported_timestamp_naive}): {e}")
+        return pd.DatetimeIndex([]), None, 0
+    # --- End timezone handling ---
+
+
+    # Prepare start and end dates for the range
+    # last_reported_time_aware should be a pandas Timestamp, so .normalize() is OK
+    start_date = last_reported_time_aware.normalize() + pd.Timedelta(days=1)
+
+    # --- FIX HERE ---
+    # current_time_date is standard datetime, use .replace() to set time to midnight
+    midnight_today = current_time_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = midnight_today - pd.Timedelta(days=1)
+    # --- END FIX ---
+
+    print(f"Debug: Calculated start_date: {start_date}")
+    print(f"Debug: Calculated end_date: {end_date}")
+
+    # Check if start_date is actually after end_date
+    if start_date > end_date:
+         print(f"No missing dates found (Start {start_date.date()} > End {end_date.date()}).")
+         return pd.DatetimeIndex([]), last_reported_time_aware, 0
+
+    # Generate the date range
+    try:
+        missing_dates = pd.date_range(start=start_date, end=end_date, freq='D')
+    except Exception as e:
+        print(f"Error calling pd.date_range with start={start_date}, end={end_date}: {e}")
+        return pd.DatetimeIndex([]), last_reported_time_aware, 0
+
     total_missing_dates = len(missing_dates)
-  else:
-    missing_dates = pd.DatetimeIndex([])  # Empty DatetimeIndex if no last reported time
-    total_missing_dates = 0
+    print(f"Debug: Found {total_missing_dates} missing dates.")
 
-  return missing_dates, last_reported_time, total_missing_dates
+    return missing_dates, last_reported_time_aware, total_missing_dates
 
 # %%
 def format_datetime(dt):
@@ -668,13 +727,13 @@ def show_rainfall_options():
     label_rainfall_option = tk.Label(root, text="Pilih Opsi Untuk Data Hujan:", font=("Arial", 12))
     label_rainfall_option.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
-    button_update_rainfall = tk.Button(root, text="Update Data Hujan Terakhir", command=goto_update_rainfall, font=("Arial", 10))
+    button_update_rainfall = tk.Button(root, text="Update Data Hujan Terakhir", command=goto_update_rainfall, font=("Arial", 10), bg=primary_button_color, fg=button_text_color) # Set color
     button_update_rainfall.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
 
-    button_add_rainfall = tk.Button(root, text="Masukkan Data Hujan Baru", command=goto_add_rainfall, font=("Arial", 10))
+    button_add_rainfall = tk.Button(root, text="Masukkan Data Hujan Baru", command=goto_add_rainfall, font=("Arial", 10), bg=primary_button_color, fg=button_text_color) # Set color
     button_add_rainfall.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
-    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10))
+    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) # Set color
     back_button.grid(row=3, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
@@ -700,11 +759,11 @@ def show_estate_options():
     estate_options = ["Inti", "Plasma"]
     combobox_estate = ttk.Combobox(root, values=estate_options, width=30, font=("Arial", 10))
     combobox_estate.grid(row=1, column=0, padx=10, pady=10)
-    submit_estate_button = tk.Button(root, text="Submit Estate", command=lambda: submit_estate(combobox_estate.get()), font=("Arial", 10))
+    submit_estate_button = tk.Button(root, text="Submit Estate", command=lambda: submit_estate(combobox_estate.get()), font=("Arial", 10), bg=primary_button_color, fg=button_text_color) # Set color
     submit_estate_button.grid(row=2, column=0, padx=10, pady=10)
-    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10))
+    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) # Set color
     back_button.grid(row=3, column=0, padx=10, pady=10)
-    main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10))
+    main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color) # Set color
     main_menu_button.grid(row=4, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
@@ -800,11 +859,11 @@ def display_analysis_results(selected_estate, nama_blok, tanggal_rencana, peilsc
     label_recommendation.grid(row=12, column=0, padx=10, pady=5, sticky="ew")
 
     # --- Re-analyze Button --- (Row 13)
-    reanalyze_button = tk.Button(root, text="Re-analyze", command=go_to_reanalyze, font=("Arial", 10))
+    reanalyze_button = tk.Button(root, text="Reanalyze", command=show_estate_options_for_analysis, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) # set color
     reanalyze_button.grid(row=13, column=0, padx=10, pady=10)
 
     # --- Back to Main Menu Button --- (Row 14)
-    back_to_main_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10))
+    main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color) # set color
     back_to_main_button.grid(row=14, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
@@ -842,7 +901,7 @@ def show_estate_options_for_analysis():
     entry_tanggal_rencana_pupuk = tk.Entry(root, font=("Arial", 10))
     entry_tanggal_rencana_pupuk.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
 
-    button_tanggal_rencana_pupuk = tk.Button(root, text="Pilih Tanggal", command=lambda: get_date(entry_tanggal_rencana_pupuk))
+    button_tanggal_rencana_pupuk = tk.Button(root, text="Select Date", command=lambda: get_date(entry_tanggal_rencana_pupuk), font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) #Added button and color
     button_tanggal_rencana_pupuk.grid(row=5, column=1, padx=5, pady=5) # Place button next to entry
 
     label_tanggal_pupuk_terakhir = tk.Label(root, text="Masukkan tanggal pupuk terakhir:", font=("Arial", 12))
@@ -851,7 +910,7 @@ def show_estate_options_for_analysis():
     entry_tanggal_pupuk_terakhir = tk.Entry(root, font=("Arial", 10))
     entry_tanggal_pupuk_terakhir.grid(row=9, column=0, padx=10, pady=5, sticky="ew")
 
-    button_tanggal_pupuk_terakhir = tk.Button(root, text="Pilih Tanggal", command=lambda: get_date(entry_tanggal_pupuk_terakhir))
+    button_tanggal_pupuk_terakhir = tk.Button(root, text="Select Date", command=lambda: get_date(entry_tanggal_pupuk_terakhir), font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) #Added button and color
     button_tanggal_pupuk_terakhir.grid(row=9, column=1, padx=5, pady=5) # Place button next to entry
 
     label_peilscale = tk.Label(root, text="Masukkan nilai Peilscale:", font=("Arial", 12))
@@ -880,22 +939,37 @@ def show_estate_options_for_analysis():
         entry_tanggal_pupuk_terakhir.get(),
         combobox_rencana_jenis_pupuk.get(),
         entry_tanggal_rencana_pupuk.get()
-    ), font=("Arial", 10))
+    ), font=("Arial", 10), bg=primary_button_color, fg=button_text_color) # Set color
     submit_estate_button.grid(row=14, column=0, padx=10, pady=10)
 
-    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10))
+    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) # Set color
     back_button.grid(row=15, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
-    root.columnconfigure(1, weight=0)
 
 def submit_analysis(selected_estate, blok, peilscale,
                     jenis_pupuk_terakhir, tanggal_pupuk_terakhir, 
                     rencana_jenis_pupuk, tanggal_rencana_pupuk):
-    global df
+    global df, current_time_date
     if not root_exists:
         return
+    
+    # Check if there's any missing date
+    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, current_time_date)
 
+    if total_missing_dates > 0:
+        messagebox.showerror("Error", f"Terdapat {total_missing_dates} hari hilang untuk estate {selected_estate} dari tanggal {last_reported_time}\nHubungi administrasi untuk perbaikan.")
+        return
+    
+    # Check if today's rainfall has been submited
+    today_date = datetime.strptime(format_datetime(current_time_date), "%d/%m/%Y").date()
+    estate_data_today = df[(df['Estate'] == selected_estate) & (df['Date'].dt.date == today_date)]
+    
+    if estate_data_today.empty:
+        messagebox.showerror("Error", "Tolong masukkan data curah hujan pada hari ini terlebih dahulu.")
+        return
+    
+    # Check if estate is empty
     if not selected_estate:
         messagebox.showerror("Error", "Tolong masukkan nama estate.")
         return
@@ -903,15 +977,25 @@ def submit_analysis(selected_estate, blok, peilscale,
     if selected_estate not in valid_estates:
         messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(valid_estates)}")
         return
-
+    
+    # Check if blok is emptys
     if not blok:
         messagebox.showerror("Error", "Tolong masukkan nama blok.")
         return
 
+    # Check if tanggal rencana pupuk is empty
     if not tanggal_rencana_pupuk:
         messagebox.showerror("Error", "Tolong masukkan tanggal rencana pupuk.")
         return
+    
+    # Check if tanggal rencana pupuk is using valid format
+    try:
+        tanggal_rencana_pupuk_dt = datetime.strptime(tanggal_rencana_pupuk, "%Y-%m-%d")
+    except ValueError:
+        messagebox.showerror("Error", "Format tanggal rencana pupuk tidak valid, tolong masukkan tanggal dengan format DD/MM/YYYY.")
+        return
 
+    # Check if peilscale is empty
     if not peilscale:
         messagebox.showerror("Error", "Masukkan nilai peilscale.")
         return
@@ -921,25 +1005,29 @@ def submit_analysis(selected_estate, blok, peilscale,
         messagebox.showerror("Error", f"Nilai peilscale invalid: {e}")
         return
 
+    # Check if tanggal pupuk terakhir is empty
     if not tanggal_pupuk_terakhir:
         messagebox.showerror("Error", "Tolong masukkan tanggal pupuk terakhir.")
         return
+    
+    # Check if tanggal pupuk terakhir is using valid format
+    try:
+        tanggal_pupuk_terakhir_dt = datetime.strptime(tanggal_pupuk_terakhir, "%Y-%m-%d")
+    except ValueError:
+        messagebox.showerror("Error", "Format tanggal pupuk terakhir tidak valid, tolong masukkan tanggal dengan format DD/MM/YYYY.")
+        return
 
+    # Check if jenis pupuk terakhir is empty
     if not jenis_pupuk_terakhir:
         messagebox.showerror("Error", "Tolong masukkan jenis pupuk terakhir.")
         return
     
+    # Check if rencana jenis pupuk is empty
     if not rencana_jenis_pupuk:
         messagebox.showerror("Error", "Tolong masukkan rencana jenis pupuk.")
         return
-
-    try:
-        tanggal_rencana_pupuk_dt = datetime.strptime(tanggal_rencana_pupuk, "%Y-%m-%d")
-        tanggal_pupuk_terakhir_dt = datetime.strptime(tanggal_pupuk_terakhir, "%Y-%m-%d")
-    except ValueError:
-        messagebox.showerror("Error", "Format tanggal tidak valid, tolong masukkan tanggal dengan format DD/MM/YYYY.")
-        return
-
+    
+    # Check if username is empty
     username = username_var.get()
     if not username.strip():
         messagebox.showerror("Error", "Tolong masukkan username di dalam main menu.")
@@ -979,8 +1067,12 @@ def go_back():
     global previous_menu
     if not root_exists:
         return
-
-    if previous_menu == "main":
+    
+    if previous_menu == "missing_dates_input":
+        hide_all_widgets()
+        root.after_idle(show_estate_options_for_add_rainfall)
+        previous_menu = "rainfall"
+    elif previous_menu == "main":
         hide_all_widgets()
         root.after_idle(create_main_widgets)
     elif previous_menu == "rainfall":
@@ -1034,13 +1126,13 @@ def show_estate_options_for_add_rainfall():
     combobox_estate = ttk.Combobox(root, values=estate_options, width=30, font=("Arial", 10))
     combobox_estate.grid(row=1, column=0, padx=10, pady=10)
 
-    submit_estate_check_button = tk.Button(root, text="Check Estate", command=lambda: check_existing_rainfall(combobox_estate.get(), current_time_date), font=("Arial", 10))
+    submit_estate_check_button = tk.Button(root, text="Check Estate", command=lambda: check_existing_rainfall(combobox_estate.get(), current_time_date), font=("Arial", 10), bg=primary_button_color, fg=button_text_color) # Set color
     submit_estate_check_button.grid(row=2, column=0, padx=10, pady=10)
 
-    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10))
+    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) # Set color
     back_button.grid(row=3, column=0, padx=10, pady=10)
 
-    main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10))
+    main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color) # Set color
     main_menu_button.grid(row=4, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
@@ -1050,43 +1142,87 @@ def check_existing_rainfall(selected_estate, current_time_date):
 
     if not root_exists:
         return
-    
+
+    # --- Input Validation ---
     estate_options = ["Inti", "Plasma"]
+    if not selected_estate:
+        messagebox.showerror("Error", "Silakan pilih estate terlebih dahulu.")
+        return
     if selected_estate not in estate_options:
-        tk.messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(estate_options)}")
+        messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(estate_options)}")
         return
 
-    today_date = datetime.strptime(format_datetime(current_time_date), "%d/%m/%Y").date()
-    estate_data_today = df[(df['Estate'] == selected_estate) & (df['Date'].dt.date == today_date)]
-    
-    if estate_data_today.empty:
-        hide_estate_widgets()
-        show_add_rainfall_entry(selected_estate, today_date)
-        previous_menu = "estate_add_rainfall" 
+    # --- Check for Missing Dates FIRST ---
+    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, current_time_date)
+
+    print(f"Checking estate: {selected_estate}") # Debug
+    print(f"Last reported: {last_reported_time}, Missing: {total_missing_dates}") # Debug
+    # print(f"Missing dates list: {missing_dates}") # Debug (can be long)
+
+    if total_missing_dates > 0:
+        # --- Show Missing Dates Input Screen ---
+        print(f"Found {total_missing_dates} missing dates. Showing input screen.") # Debug
+        # It's generally better *not* to show a blocking error here, but proceed to the input screen
+        # messagebox.showinfo("Info", f"Terdapat {total_missing_dates} hari data hujan yang hilang untuk estate {selected_estate} sejak {format_datetime(last_reported_time + timedelta(days=1))}.\n\nAnda akan diminta untuk mengisi data tersebut terlebih dahulu.")
+        show_missing_dates_input(selected_estate, missing_dates)
+        # previous_menu is set inside show_missing_dates_input
+
     else:
-        hide_estate_widgets()
-        show_rainfall_data_entry(selected_estate)
-        previous_menu = "estate_add_rainfall" 
+        # --- No Missing Dates, Check Today's Data ---
+        print("No missing dates found. Checking today's data.") # Debug
+        today_date = current_time_date.date() # Use date object for comparison
+        # Ensure 'Date' column in df is datetime type before comparison
+        if not pd.api.types.is_datetime64_any_dtype(df['Date']):
+             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+
+        estate_data_today = df[(df['Estate'] == selected_estate) & (df['Date'].dt.date == today_date)]
+
+        if estate_data_today.empty:
+            # --- Today's Data Missing: Show Input Screen for Today ---
+            print("Today's data not found. Showing add rainfall entry.") # Debug
+            # hide_estate_widgets() # hide_all_widgets is called in show_add_rainfall_entry
+            show_add_rainfall_entry(selected_estate, today_date)
+            previous_menu = "estate_add_rainfall" # Came from estate selection
+        else:
+            # --- Today's Data Exists ---
+            print("Today's data already exists.") # Debug
+            # hide_estate_widgets() # hide_all_widgets is called later if needed
+            messagebox.showinfo("Info", f"Data hujan untuk estate {selected_estate} pada hari ini ({format_datetime(today_date)}) sudah dimasukkan.")
+            # Decide where to go now - maybe back to main menu or rainfall options?
+            back_to_main() # Or show_rainfall_options()
+            # Alternatively, you could offer to go to the 'Update' screen:
+            # print("Going to update screen as today's data exists.")
+            # show_rainfall_data_entry(selected_estate)
+            # previous_menu = "estate_add_rainfall" # Or adjust as needed
 
 def show_add_rainfall_entry(selected_estate, date):
     """Displays the screen to add new rainfall data."""
-    global entry_daily_rainfall, label_daily_rainfall, submit_add_rainfall_button
+    global entry_daily_rainfall, label_daily_rainfall, submit_add_rainfall_button, previous_menu # Added previous_menu
+
+    if not root_exists: return # Added check
 
     hide_all_widgets()
+    # Make sure previous_menu is set correctly before calling this function
+    # If coming from submit_missing_dates, previous_menu should ideally be set
+    # to 'missing_dates_input' or similar before calling this.
+    # Let's set it here for now if it wasn't set properly before.
+    previous_menu = "missing_dates_input" # Or adjust based on actual flow
 
-    label_daily_rainfall = tk.Label(root, text=f"Masukkan Data Hujan (mm) untuk {selected_estate} hari ini ({format_datetime(current_time_date)}):", font=("Arial", 12))
+    # --- FIX THE LABEL TEXT ---
+    label_daily_rainfall = tk.Label(root, text=f"Masukkan Data Hujan (mm) untuk {selected_estate} pada tanggal {format_datetime(date)}:", font=("Arial", 12))
     label_daily_rainfall.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
     entry_daily_rainfall = tk.Entry(root, font=("Arial", 10))
     entry_daily_rainfall.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
 
-    submit_add_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_estate_for_add_rainfall(selected_estate, date, entry_daily_rainfall.get()), font=("Arial", 10))
+    # Pass the correct 'date' (which is datetime.date) to the submit function
+    submit_add_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_estate_for_add_rainfall(selected_estate, date, entry_daily_rainfall.get()), font=("Arial", 10), bg=primary_button_color, fg=button_text_color)
     submit_add_rainfall_button.grid(row=2, column=0, padx=10, pady=10)
 
-    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10))
+    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color)
     back_button.grid(row=3, column=0, padx=10, pady=10)
 
-    main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10))
+    main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color)
     main_menu_button.grid(row=4, column=0, padx=10, pady=10)
     root.columnconfigure(0, weight=1)
 
@@ -1150,13 +1286,13 @@ def show_rainfall_data_entry(selected_estate):
         entry_update_rainfall.insert(0, str(last_rainfall))  
         entry_update_rainfall.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
 
-        submit_update_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_update_rainfall(selected_estate, last_date, entry_update_rainfall.get()), font=("Arial", 10))
+        submit_update_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_update_rainfall(selected_estate, last_date, entry_update_rainfall.get()), font=("Arial", 10), bg=primary_button_color, fg=button_text_color) # set color
         submit_update_rainfall_button.grid(row=4, column=0, padx=10, pady=10)
 
-        back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10))
+        back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) # set color
         back_button.grid(row=5, column=0, padx=10, pady=10)
 
-        main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10))
+        main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color) # set color
         main_menu_button.grid(row=6, column=0, padx=10, pady=10)
 
         root.columnconfigure(0, weight=1)
@@ -1166,10 +1302,10 @@ def show_rainfall_data_entry(selected_estate):
         label_no_data = tk.Label(root, text=f"No rainfall data found for {selected_estate}.", font=("Arial", 12))
         label_no_data.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
-        back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10))
+        back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color) # set color
         back_button.grid(row=3, column=0, padx=10, pady=10)
 
-        main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10))
+        main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color) # set color
         main_menu_button.grid(row=4, column=0, padx=10, pady=10)
         root.columnconfigure(0, weight=1)
 
@@ -1212,8 +1348,8 @@ def show_success_window():
 
     label_success = tk.Label(success_window, text="Update data hujan sukses!", font=("Arial", 12))
     label_success.pack(pady=10)
-
-    button_back_to_main = tk.Button(success_window, text="Back to Main Menu", command=close_success_and_go_back, font=("Arial", 10))
+    
+    button_back_to_main = tk.Button(success_window, text="Back to Main Menu", command=close_success_and_go_back, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color) # set color
     button_back_to_main.pack(pady=5)
     
     success_window.columnconfigure(0, weight=1)
@@ -1289,13 +1425,13 @@ def create_main_widgets():
         label_saved_username = tk.Label(root, text=f"Masuk ke sistem sebagai: {username}", font=("Arial", 12))
         label_saved_username.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
-    button_input_hujan = tk.Button(root, text="Masukkan Data Hujan", command=goto_input_hujan, font=("Arial", 12))
+    button_input_hujan = tk.Button(root, text="Masukkan Data Hujan", command=goto_input_hujan, font=("Arial", 12), bg=primary_button_color, fg=button_text_color)  # Set colors
     button_input_hujan.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
-    button_analisa_pemupukan = tk.Button(root, text="Analisa Pemupukan", command=goto_analisa_pemupukan, font=("Arial", 12))
+    button_analisa_pemupukan = tk.Button(root, text="Analisa Pemupukan", command=goto_analisa_pemupukan, font=("Arial", 12), bg=primary_button_color, fg=button_text_color)  # Set colors
     button_analisa_pemupukan.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
 
-    exit_button = tk.Button(root, text="Exit", command=on_closing, font=("Arial", 10))
+    exit_button = tk.Button(root, text="Exit", command=on_closing, font=("Arial", 10), bg=exit_button_color, fg=button_text_color)
     exit_button.grid(row=5, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
@@ -1334,6 +1470,138 @@ def goto_analisa_pemupukan():
     previous_menu = "main"
     hide_all_widgets()
     show_estate_options_for_analysis()
+
+def show_missing_dates_input(selected_estate, missing_dates_list):
+    """Displays the screen to input rainfall for missing dates."""
+    global missing_dates_widgets, label_missing_dates_title, submit_missing_dates_button, back_button, main_menu_button, previous_menu, current_menu
+
+    if not root_exists:
+        return
+
+    hide_all_widgets()
+    current_menu = "missing_dates_input"
+    previous_menu = "estate_add_rainfall" # Came from estate selection
+
+    missing_dates_widgets = {} # Clear previous widgets
+
+    label_missing_dates_title = tk.Label(root, text=f"Masukkan data hujan untuk tanggal yang hilang ({selected_estate}):", font=("Arial", 12, "bold"))
+    label_missing_dates_title.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+
+    row_num = 1
+    for date in missing_dates_list:
+        date_str = format_datetime(date.date())
+        label = tk.Label(root, text=f"Tanggal {date_str} (mm):", font=("Arial", 10))
+        label.grid(row=row_num, column=0, padx=10, pady=5, sticky="w")
+
+        entry = tk.Entry(root, font=("Arial", 10))
+        entry.grid(row=row_num, column=1, padx=10, pady=5, sticky="ew")
+
+        missing_dates_widgets[date.date()] = {"label": label, "entry": entry} # Store by date object
+        row_num += 1
+
+    submit_missing_dates_button = tk.Button(root, text="Submit Data Hilang",
+                                            command=lambda: submit_missing_dates(selected_estate, missing_dates_list),
+                                            font=("Arial", 10), bg=primary_button_color, fg=button_text_color)
+    submit_missing_dates_button.grid(row=row_num, column=0, columnspan=2, padx=10, pady=15)
+    row_num += 1
+
+    back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=secondary_button_color, fg=button_text_color)
+    back_button.grid(row=row_num, column=0, columnspan=2, padx=10, pady=5)
+    row_num += 1
+
+    main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=main_menu_button_color, fg=button_text_color)
+    main_menu_button.grid(row=row_num, column=0, columnspan=2, padx=10, pady=5)
+
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=1)
+
+def submit_missing_dates(selected_estate, missing_dates_list):
+    """Processes the input for missing rainfall dates."""
+    global df, missing_dates_widgets # Remove current_time_date from global if not needed elsewhere in this func
+
+    if not root_exists:
+        return
+
+    rainfall_inputs = {}
+    try:
+        # --- Validation Phase ---
+        for date_item in missing_dates_list: # Use different variable name to avoid confusion
+            print(f"Validating date: {date_item}, Type: {type(date_item)}") # Debug print
+
+            # --- Gracefully handle date object ---
+            if isinstance(date_item, dt.datetime) or hasattr(date_item, 'date'): # Check if it's datetime or has .date() (like Timestamp)
+                 date_obj = date_item.date()
+            elif isinstance(date_item, dt.date):
+                 date_obj = date_item # It's already a date object
+            else:
+                 # Handle unexpected type if necessary
+                 messagebox.showerror("Error", f"Tipe data tanggal tidak dikenal: {type(date_item)}")
+                 return
+            # --- End of handling ---
+
+            # Now use date_obj (which is guaranteed to be a datetime.date) as the key
+            if date_obj not in missing_dates_widgets:
+                 messagebox.showerror("Error", f"Widget input tidak ditemukan untuk tanggal {format_datetime(date_obj)}")
+                 print(f"Key error: {date_obj} not in {missing_dates_widgets.keys()}") # Debug print
+                 return
+
+            entry_widget = missing_dates_widgets[date_obj]["entry"]
+            rainfall_str = entry_widget.get()
+            if not rainfall_str:
+                messagebox.showerror("Error", f"Nilai curah hujan untuk tanggal {format_datetime(date_obj)} tidak boleh kosong.")
+                return
+
+            rainfall_val = float(rainfall_str)
+            if rainfall_val < 0:
+                messagebox.showerror("Error", f"Nilai curah hujan untuk tanggal {format_datetime(date_obj)} tidak boleh negatif.")
+                return
+            rainfall_inputs[date_obj] = rainfall_val # Store validated value, keyed by date_obj
+
+        # --- Processing Phase ---
+        # Sort dates to ensure correct calculation order
+        sorted_dates = sorted(rainfall_inputs.keys())
+
+        for date_obj in sorted_dates:
+            rainfall_val = rainfall_inputs[date_obj]
+            print(f"Processing missing date: {format_datetime(date_obj)}, Rainfall: {rainfall_val}") # Debug print
+            df = calculate_rainfall(df, date_obj, rainfall_val, selected_estate)
+            root.update_idletasks() # Update UI briefly
+
+
+        messagebox.showinfo("Sukses", f"Data hujan untuk tanggal yang hilang ({len(sorted_dates)} hari) telah berhasil ditambahkan.")
+
+        # --- Proceed to Today's Input ---
+        today_now = datetime.now(current_timezone) # Get FRESH datetime HERE
+        today_date_obj = today_now.date()          # Extract date part correctly
+
+        # Ensure 'Date' column is datetime before comparison
+        if not pd.api.types.is_datetime64_any_dtype(df['Date']):
+             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df.dropna(subset=['Date'], inplace=True) # Drop rows where conversion failed
+
+        estate_data_today = df[(df['Estate'] == selected_estate) & (df['Date'].dt.date == today_date_obj)]
+
+        if estate_data_today.empty:
+            print("Proceeding to input today's rainfall...")
+            # Pass today_date_obj (which is datetime.date)
+            show_add_rainfall_entry(selected_estate, today_date_obj)
+        else:
+            print("Today's rainfall already exists after filling gaps.")
+            messagebox.showinfo("Info", f"Data hujan untuk hari ini ({format_datetime(today_date_obj)}) sudah ada.")
+            back_to_main()
+
+    except ValueError:
+        messagebox.showerror("Error", "Input curah hujan tidak valid. Harap masukkan angka.")
+        return
+    except Exception as e:
+        # Print detailed traceback
+        import traceback
+        print("--- Traceback ---")
+        traceback.print_exc()
+        print("--- End Traceback ---")
+        messagebox.showerror("Error", f"Terjadi kesalahan saat memproses data: {e}")
+        print(f"Error during submit_missing_dates: {e}") # Log the error
+        return
 
 def disable_buttons():
     """Disables all interactive buttons to prevent further events."""
@@ -1477,6 +1745,9 @@ def main_process():
     entry_update_rainfall = None
     submit_update_rainfall_button = None
     label_saved_username = None
+    missing_dates_widgets = {}
+    label_missing_dates_title = None
+    submit_missing_dates_button = None
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.columnconfigure(0, weight=1)
