@@ -28,6 +28,7 @@ from oauth2client.service_account import ServiceAccountCredentials # pip install
 import tkinter as tk
 from tkinter import ttk, messagebox, StringVar
 from tkcalendar import Calendar # pip install tkcalendar
+from PIL import Image, ImageTk
 
 # %% [markdown]
 #  ## 2. Configuration and Constants
@@ -46,6 +47,7 @@ def resource_path(relative_path):
 JSON_PATH = resource_path('enginewaktuaplikasipemupukan-03e33861bae9.json') # Make sure file exists
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1QFvCOJoAPWQCKtej1bwHM7akrCF2dcHtQSFGPxIXckE/edit?usp=sharing"
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+SPLASH_IMAGE = resource_path('splash_image.png')
 
 # --- Fertilizer Data ---
 FERTILIZER_GROUPS = {
@@ -871,6 +873,18 @@ def get_all_recommendation(last_group, next_group, last_fertilizer_date, next_fe
 #  ## 8. GUI - Utility Functions
 
 # %%
+# (Place this function definition somewhere appropriate, e.g., Section 11)
+def exit_fullscreen(event=None):
+    """Exits fullscreen mode when the Escape key is pressed."""
+    global root
+    if root:
+        print("Escape key pressed, exiting fullscreen.") # Feedback
+        root.attributes('-fullscreen', False)
+        # Optional: You might want to set a default size after exiting fullscreen
+        # root.geometry("1200x800") # Example size
+        # Or, just let it revert to its natural size based on content/previous state.
+
+# %%
 def configure_bg(color):
     """Sets the background color of the root window."""
     # Simplified: Only set root background. Widgets keep default or specific colors.
@@ -1003,6 +1017,113 @@ def validate_rainfall_data_exists(selected_estate):
 
 # %% [markdown]
 #  ## 9. GUI - Screen Creation Functions
+
+# %%
+def create_splash_screen():
+    """Creates and displays the splash screen."""
+    global splash_label, splash_button, root
+
+    if not root_exists: return
+
+    # Ensure root window is clean (optional, good practice)
+    for widget in root.winfo_children():
+        widget.destroy()
+
+    try:
+        # --- Load and Resize Image ---
+        image_path = SPLASH_IMAGE # <-- REPLACE with your image filename
+        if not os.path.exists(image_path):
+             messagebox.showerror("Error", f"Splash image not found at:\n{image_path}")
+             # Fallback or exit? Let's proceed without image for now
+             img = None
+             photo_image = None
+        else:
+            # Get screen size
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+
+            # Open image with Pillow
+            img_original = Image.open(image_path)
+
+            # Resize to fit screen (using LANCZOS for good quality)
+            # Pillow versions >= 9.1.0 use Image.Resampling.LANCZOS
+            # Older versions use Image.LANCZOS
+            try:
+                resample_filter = Image.Resampling.LANCZOS
+            except AttributeError:
+                resample_filter = Image.LANCZOS # Fallback for older Pillow
+
+            img_resized = img_original.resize((screen_width, screen_height), resample_filter)
+
+            # Convert to Tkinter PhotoImage
+            photo_image = ImageTk.PhotoImage(img_resized)
+
+        # --- Create Label for Image ---
+        splash_label = tk.Label(root, image=photo_image)
+        # IMPORTANT: Keep a reference to the image to prevent garbage collection
+        if photo_image:
+            splash_label.image = photo_image
+        splash_label.place(x=0, y=0, relwidth=1, relheight=1) # Cover entire window
+
+        # --- Create Start Button ---
+        # Place it slightly offset from the bottom-right corner
+        splash_button = tk.Button(root, text="Start", command=start_main_app,
+                                  font=("Arial", 14, "bold"), # Make it stand out
+                                  bg="#4CAF50", # Green background
+                                  fg="white",   # White text
+                                  relief=tk.RAISED, bd=3)
+        splash_button.place(relx=1.0, rely=1.0, anchor='se', x=-20, y=-20) # anchor='se' means South-East corner
+
+    except FileNotFoundError:
+         messagebox.showerror("Error", f"Splash image file not found: {image_path}")
+         # Optionally call start_main_app() immediately to bypass splash on error
+         root.after(100, start_main_app) # Start app after short delay
+    except Exception as e:
+        messagebox.showerror("Splash Screen Error", f"Could not load splash screen: {e}")
+        traceback.print_exc()
+        # Optionally call start_main_app() immediately to bypass splash on error
+        root.after(100, start_main_app) # Start app after short delay
+
+
+# %%
+def start_main_app():
+    """Destroys splash screen elements, loads data, and starts the main app."""
+    global splash_label, splash_button, root, df, sheet_data, sheet_output
+
+    if not root_exists: return # Exit if window closed prematurely
+
+    # Destroy splash screen widgets
+    if splash_label:
+        splash_label.destroy()
+    if splash_button:
+        splash_button.destroy()
+
+    # --- Connect to Google Sheets and Load Initial Data ---
+    # Moved here from main_process to avoid delay before splash shows
+    try:
+        print("Connecting to Google Sheets...") # Feedback
+        creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_PATH, SCOPE)
+        client = gspread.authorize(creds)
+        sheet_data = client.open_by_url(SHEET_URL).worksheet("DB")
+        sheet_output = client.open_by_url(SHEET_URL).worksheet("Output")
+        print("Successfully connected to Google Sheets.")
+    except Exception as e:
+        messagebox.showerror("Startup Error", f"Gagal terhubung ke Google Sheets: {e}\nAplikasi akan ditutup.")
+        if root: root.destroy()
+        return
+
+    # --- Load Initial Data ---
+    print("Loading initial data...") # Feedback
+    df = load_database(SHEET_URL, JSON_PATH) # load_database now gets sheet handles
+    if df.empty:
+        # load_database shows its own error, just ensure window closes
+        messagebox.showerror("Startup Error", "Gagal memuat data awal.\nAplikasi akan ditutup.")
+        if root: root.destroy()
+        return
+    print("Data loaded successfully.") # Feedback
+
+    # --- Now create the main application widgets ---
+    create_main_widgets()
 
 # %%
 def create_main_widgets():
@@ -2031,13 +2152,13 @@ def main_process():
            label_nama_blok, label_tanggal_rencana, label_peilscale_value, \
            label_tanggal_terakhir_value, label_jenis_terakhir_value, \
            label_rencana_jenis_value, back_to_main_button, reanalyze_button, \
-           label_saved_username, label_no_data # Added label_no_data
+           label_saved_username, label_no_data, splash_label, splash_button
 
 
     # --- Initialize App ---
     root = tk.Tk()
     root.title("Engine Waktu Aplikasi Pemupukan (SSM)")
-    root.state('zoomed')
+    root.attributes('-fullscreen', True)
 
     # --- Initialize State Variables ---
     username_var = StringVar()
@@ -2102,6 +2223,8 @@ def main_process():
     missing_dates_widgets = {}
     label_missing_dates_title = None
     submit_missing_dates_button = None
+    splash_label = None
+    splash_button = None
 
     # --- Connect to Google Sheets ---
     try:
@@ -2127,8 +2250,10 @@ def main_process():
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.columnconfigure(0, weight=1) # Configure root column initially
 
+    root.bind('<Escape>', lambda event: on_closing())
+
     # --- Start GUI ---
-    create_main_widgets()
+    create_splash_screen()
     root.iconbitmap(resource_path("Logo_Pancaran_Agro-removebg-preview.ico"))  # Make sure the path is correct
     root.mainloop()
 
