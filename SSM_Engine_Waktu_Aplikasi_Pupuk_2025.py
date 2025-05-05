@@ -25,7 +25,7 @@ from oauth2client.service_account import ServiceAccountCredentials # pip install
 # from google.oauth2.service_account import Credentials # Alternative auth
 
 # GUI Libraries
-import tkinter as tk
+import tkinter as tk # pip install tkinter
 from tkinter import ttk, messagebox, StringVar
 from tkcalendar import Calendar # pip install tkcalendar
 from PIL import Image, ImageTk
@@ -45,7 +45,7 @@ def resource_path(relative_path):
 
 # --- Authentication ---
 JSON_PATH = resource_path('enginewaktuaplikasipemupukan-03e33861bae9.json') # Make sure file exists
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1QFvCOJoAPWQCKtej1bwHM7akrCF2dcHtQSFGPxIXckE/edit?usp=sharing"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1QFvCOJoAPWQCKtej1bwHM7akrCF2dcHtQSFGPxIXckE/edit?usp=sharing" # Make sure file is shared with the service account email
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 SPLASH_IMAGE = resource_path('splash_image.png')
 
@@ -91,15 +91,16 @@ HYGROSCOPIC = {
 ESTATE_OPTIONS = ["Inti", "Plasma"] # Use constant for options
 
 INTERVAL_TABLE = {
-    "NPK": {"NPK": 60, "Urea": 14, "RP": 30, "TSP": 30, "Kieserite": 14, "Dolomite": 30, "MOP": 14, "HGFB": 30, "Zincop": 30},
-    "Urea": {"NPK": 14, "Urea": 60, "RP": 30, "TSP": 30, "Kieserite": 14, "Dolomite": 30, "MOP": 14, "HGFB": 30, "Zincop": 30},
-    "RP": {"NPK": 30, "Urea": 30, "RP": 60, "TSP": 60, "Kieserite": 14, "Dolomite": 14, "MOP": 30, "HGFB": 30, "Zincop": 30},
-    "TSP": {"NPK": 30, "Urea": 30, "RP": None, "TSP": 30, "Kieserite": 30, "Dolomite": 30, "MOP": 30, "HGFB": 30, "Zincop": 30},
-    "Kieserite": {"NPK": 14, "Urea": 14, "RP": 14, "TSP": 30, "Kieserite": 60, "Dolomite": 60, "MOP": 30, "HGFB": 14, "Zincop": 30},
-    "Dolomite": {"NPK": 30, "Urea": 30, "RP": 14, "TSP": 30, "Kieserite": None, "Dolomite": 30, "MOP": 30, "HGFB": 30, "Zincop": 30},
-    "MOP": {"NPK": 14, "Urea": 14, "RP": 30, "TSP": 30, "Kieserite": 30, "Dolomite": 30, "MOP": 60, "HGFB": 30, "Zincop": 30},
-    "HGFB": {"NPK": 30, "Urea": 30, "RP": 30, "TSP": 30, "Kieserite": 14, "Dolomite": 30, "MOP": 30, "HGFB": 60, "Zincop": 14},
-    "Zincop": {"NPK": 30, "Urea": 30, "RP": 30, "TSP": 30, "Kieserite": 30, "Dolomite": 30, "MOP": 30, "HGFB": 14, "Zincop": 60},
+    "NPK": {"NPK": 60, "Urea": 14, "RP": 30, "TSP": 30, "Kieserite": 14, "Dolomite": 30, "MOP": 14, "HGFB": 30, "Zincop": 30, "CuSO4": 30},
+    "Urea": {"NPK": 14, "Urea": 60, "RP": 30, "TSP": 30, "Kieserite": 14, "Dolomite": 30, "MOP": 14, "HGFB": 30, "Zincop": 30, "CuSO4": 30},
+    "RP": {"NPK": 30, "Urea": 30, "RP": 60, "TSP": 60, "Kieserite": 14, "Dolomite": 14, "MOP": 30, "HGFB": 30, "Zincop": 30, "CuSO4": 30},
+    "TSP": {"NPK": 30, "Urea": 30, "RP": None, "TSP": 30, "Kieserite": 30, "Dolomite": 30, "MOP": 30, "HGFB": 30, "Zincop": 30, "CuSO4": 30},
+    "Kieserite": {"NPK": 14, "Urea": 14, "RP": 14, "TSP": 30, "Kieserite": 60, "Dolomite": 60, "MOP": 30, "HGFB": 14, "Zincop": 30, "CuSO4": 30},
+    "Dolomite": {"NPK": 30, "Urea": 30, "RP": 14, "TSP": 30, "Kieserite": None, "Dolomite": 30, "MOP": 30, "HGFB": 30, "Zincop": 30, "CuSO4": 30},
+    "MOP": {"NPK": 14, "Urea": 14, "RP": 30, "TSP": 30, "Kieserite": 30, "Dolomite": 30, "MOP": 60, "HGFB": 30, "Zincop": 30, "CuSO4": 30},
+    "HGFB": {"NPK": 30, "Urea": 30, "RP": 30, "TSP": 30, "Kieserite": 14, "Dolomite": 30, "MOP": 30, "HGFB": 60, "Zincop": 14, "CuSO4": 14},
+    "Zincop": {"NPK": 30, "Urea": 30, "RP": 30, "TSP": 30, "Kieserite": 30, "Dolomite": 30, "MOP": 30, "HGFB": 14, "Zincop": 60, "CuSO4": 14},
+    "CuSO4": {"NPK": 30, "Urea": 30, "RP": 30, "TSP": 30, "Kieserite": 30, "Dolomite": 30, "MOP": 30, "HGFB": 14, "Zincop": 14, "CuSO4": 60},
 }
 
 FERTILIZER_TYPE = ["NPK 13", "NPK 15", "NPK 12", "Dolomite", "Urea", "MOP", "HGFB", "CuSO4", "Zincop Chelated", "Kieserite", "RP", "Kaptan", "TSP"]
