@@ -16,6 +16,8 @@ import datetime
 from datetime import timedelta
 import subprocess
 import traceback # For detailed error printing
+import random
+import string
 
 # Third-Party Libraries
 import pandas as pd
@@ -64,7 +66,7 @@ FERTILIZER_GROUPS = {
     "TSP": ["TSP"]
 }
 
-SYNERGIZE_GROUPS = { # Note: This dictionary seems less used in the provided core analysis logic
+SYNERGIZE_GROUPS = {
     "NPK": ["Urea", "Kieserite", "MOP"],
     "Urea": ["NPK", "Kieserite", "MOP"],
     "RP": ["Kieserite", "Dolomite"],
@@ -81,12 +83,21 @@ SUPER_SLOW = {
     "Dolomite": ["Dolomite"]
 }
 
+DRY_SEASON_ONLY = [
+    "Dolomite",
+    "TSP",
+    "RP",
+]
+
 HYGROSCOPIC = {
     "Urea": ["Urea"],
     "HGFB": ["HGFB"],
     "CuSO4": ["CuSO4"],
     "MOP": ["MOP"]
 }
+
+NOT_ALLOWED_3_DAYS = ["Urea"]
+NOT_ALLOWED_7_DAYS = ["Urea", "MOP", "HGFB"]
 
 ESTATE_OPTIONS = ["Inti", "Plasma"] # Use constant for options
 
@@ -113,6 +124,7 @@ MAIN_MENU_BUTTON_COLOR = "#f44336"  # Red
 EXIT_BUTTON_COLOR = "#f44336" # Red
 TEXT_COLOR = "#000000" # Black
 BUTTON_TEXT_COLOR = "#ffffff"  # White
+ANALISA_ID_TEXT_COLOR = "#0e7767"
 
 # --- Timezone ---
 CURRENT_TIMEZONE = pytz.timezone('Asia/Jakarta') # Or your preferred timezone
@@ -249,6 +261,7 @@ current_menu = None
 df = pd.DataFrame() # In-memory data store
 current_time_date = datetime.datetime.now(CURRENT_TIMEZONE) # Ensure it uses datetime.datetime
 formatted_today = format_datetime(current_time_date)
+yesterday_time_date = current_time_date - datetime.timedelta(days=1)
 
 # --- User State ---
 username_var = None # Will be StringVar, created in main_process
@@ -325,7 +338,7 @@ def load_database(sheet_url, json_path):
         traceback.print_exc() # Print full traceback for debugging
         return pd.DataFrame()
 
-def append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation):
+def append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation):
     """Appends analysis results to the 'Output' Google Sheet."""
     global sheet_output
 
@@ -348,7 +361,7 @@ def append_to_spreadsheet(date_input, username, estate_name, blok_name, current_
 
         output_data = [
             date_input.strftime('%Y-%m-%d %H:%M:%S'), username, estate_name,
-            blok_name, current_daily_rainfall, peilscale, last_fertilizer,
+            blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer,
             last_fert_date_str, # Use formatted string
             next_fertilizer,
             next_fert_date_str, # Use formatted string
@@ -382,7 +395,6 @@ def remove_old_data(df, date_to_remove, estate_name):
             print(f"Removed {len(indices_to_drop)} row(s) from DataFrame for {estate_name} on {date_str_format}")
         else:
              print(f"No matching row found in DataFrame for {estate_name} on {date_str_format}")
-
 
         # Remove from spreadsheet (find all matching rows and delete)
         # Use findall to get all matching cells for the date in the first column
@@ -419,95 +431,10 @@ def remove_old_data(df, date_to_remove, estate_name):
 
 
 
-# %%
-def analyze_fertilizer(date_input, username, estate_name, blok_name, df, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date):
-
-  # Filter the DataFrame for the selected estate
-  estate_df = df[df['Estate'] == estate_name]
-
-  # Get the current daily rainfall (last entry for the estate)
-  current_daily_rainfall = estate_df['Daily Rainfall (mm)'].iloc[-1]
-
-  #check if today's rainfall is greater than or equal to 60
-  reason = ""
-  if current_daily_rainfall >= 60:
-    reason = "Curah hujan lebih dari 60 mm, pemupukan dihentikan"
-    print(reason)
-    status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, 0, "", last_fertilizer_date, "", next_fertilizer_date, reason, "")
-    recommendation = ""
-    return current_daily_rainfall, status, reason, recommendation
-
-  #check the accumulated rainfall data
-  validate_water, rain_factor, peilscale_factor, season_factor, dry_with_rain = validate_water_track(df, current_daily_rainfall, peilscale, next_fertilizer)
-  if(not validate_water):
-    if(not rain_factor):
-      reason = "Tidak bisa melakukan pemupukan, karena curah hujan"
-      status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, "", last_fertilizer_date, "", next_fertilizer_date, reason, "")
-      recommendation = ""
-      return current_daily_rainfall, status, reason, recommendation
-    elif(not peilscale_factor):
-      reason = "Tidak bisa melakukan pemupukan, karena peilscale di atas -51"
-      status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, "", last_fertilizer_date, "", next_fertilizer_date, reason, "")
-      recommendation = ""
-      return current_daily_rainfall, status, reason, recommendation
-    elif(not season_factor):
-      reason = f"Tidak bisa melakukan pemupukan, karena musim {season_factor}"
-      if season_factor == "Wet":
-          status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, "", last_fertilizer_date, "", next_fertilizer_date, reason, "")
-          recommendation = ""
-          return current_daily_rainfall, status, reason, recommendation
-      elif season_factor == "Dry":
-          print(reason)
-
-  #get the last fertilizer's group
-  last_group = get_fertilizer_group(last_fertilizer)
-  #get the next fertilizer's group
-  next_group = get_fertilizer_group(next_fertilizer)
-
-  #check the interval between the last & the next fertilizer
-  validate_interval_result = validate_interval_fertilizer(last_group, next_group, last_fertilizer_date, next_fertilizer_date)
-
-  #check the alternative
-  Alternatives = []
-  if (not validate_interval_result):
-    if last_group == next_group:
-      reason = "Karena jarak interval pemupukan di bawah 60 hari"
-    elif last_group != next_group:
-      reason = "Karena jarak interval pemupukan di bawah 30 hari"
-    Alternatives = get_alternative_fertilizer(last_group, next_group, last_fertilizer_date, next_fertilizer_date, INTERVAL_TABLE, FERTILIZER_GROUPS)
-  else:
-    Alternatives = get_all_recommendation(last_group, next_group, last_fertilizer_date, next_fertilizer_date, INTERVAL_TABLE, FERTILIZER_GROUPS)
-
-  #check the specific fertilizer trait
-  #Dolomite
-  Alternatives = validate_dolomite(df, last_fertilizer, last_fertilizer_date, next_fertilizer_date, Alternatives)
-  #Discard because dry week
-  is_dry_week = validate_dry_week(next_fertilizer, df)
-  if next_fertilizer == "Urea" and is_dry_week >= 3:
-      reason = "3 hari kebelakang tidak terdapat hujan sama sekali"
-  elif next_fertilizer in ["Urea", "MOP", "HGFB"] and is_dry_week >= 7:
-      reason = "7 hari kebelakang tidak terdapat hujan sama sekali"
-
-  #Join the alternative option
-  alternative = ', '.join(Alternatives)
-  recommendation = ""
-  plan_fertilizer_date = (last_fertilizer_date + datetime.timedelta(days=14)).date()
-  if (len(Alternatives) != 0):
-    recommendation = f"Pupuk alternatif yang disarankan: {alternative}"
-
-  # Append to spreadsheet
-  status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation)
-
-  return current_daily_rainfall, status, reason, recommendation
-
 # %% [markdown]
 #  ## 6. Core Logic - Rainfall & Water Balance
 
 # %%
-import datetime # Ensure import
-import pandas as pd # Ensure import
-from datetime import timedelta # Ensure import
-
 def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
     """
     Calculates rainfall metrics for a specific date and estate,
@@ -637,43 +564,92 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
 
 
 # %%
-def analyze_fertilizer(date_input, username, estate_name, blok_name, df, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date):
+def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa, df, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date):
 
-  # Filter the DataFrame for the selected estate
-  estate_df = df[df['Estate'] == estate_name]
+  reason = ""
+  recommendation = ""
+  
+  # Filter the DataFrame and make a copy to avoid SettingWithCopyWarning
+  estate_df = df[df['Estate'] == estate_name].copy()
 
-  # Get the current daily rainfall (last entry for the estate)
-  current_daily_rainfall = estate_df['Daily Rainfall (mm)'].iloc[-1]
+  # Convert 'Date' column to datetime.date safely
+  estate_df['Date'] = pd.to_datetime(estate_df['Date'], errors='coerce').dt.date
+  
+  # Get all available dates
+  available_dates = estate_df['Date'].dropna().sort_values().unique()
+
+  # Get Today's and Yesterday's dates
+  today_date = current_time_date.date()
+  yesterday_date = yesterday_time_date.date()
+  
+  # Decide which date to use for rainfall
+  if next_fertilizer_date.date() == today_date: # If next fertilizer date is today
+      use_date = yesterday_date
+      estate_df = estate_df[estate_df['Date'] != today_date]
+  elif today_date == (next_fertilizer_date.date() - datetime.timedelta(days=1)): # If today is one day before next fertilizer date
+      use_date = today_date
+  elif next_fertilizer_date.date() < today_date: # If next fertilizer date is in the past
+     use_date = next_fertilizer_date.date() - datetime.timedelta(days=1)
+     estate_df = estate_df[estate_df['Date'] <= use_date]
+  else: # If next fertilizer date is in the future
+      use_date = max(available_dates)
+
+  # Fetch rainfall for that date
+  rainfall_row = estate_df[estate_df['Date'] == use_date]
+  if not rainfall_row.empty:
+      current_daily_rainfall = rainfall_row['Daily Rainfall (mm)'].values[0]
+  else:
+      current_daily_rainfall = 0  # or consider throwing a warning
+      
+  # Check data gap
+  last_available_date = max(available_dates)
+  gap_days = (next_fertilizer_date.date() - last_available_date).days
+  if gap_days >= 2:
+      reason += f"Waktu curah hujan terakhir terlalu jauh dengan tanggal pemupukan selanjutnya. Terdapat {gap_days} hari kosong."
+      status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+      return current_daily_rainfall, status, reason, recommendation
 
   #check if today's rainfall is greater than or equal to 60
-  reason = ""
   if current_daily_rainfall >= 60:
     reason = "Curah hujan lebih dari 60 mm, pemupukan dihentikan"
     print(reason)
-    status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, 0, "", last_fertilizer_date, "", next_fertilizer_date, reason, "")
-    recommendation = ""
+    status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
     return current_daily_rainfall, status, reason, recommendation
 
   #check the accumulated rainfall data
-  validate_water, rain_factor, peilscale_factor, season_factor, dry_with_rain = validate_water_track(df, current_daily_rainfall, peilscale, next_fertilizer)
+  validate_water, rain_factor, peilscale_factor, season_factor, current_season, dry_with_rain = validate_water_track(estate_df, current_daily_rainfall, peilscale, next_fertilizer)
   if(not validate_water):
+    # Validasi 1
     if(not rain_factor):
-      reason = "Tidak bisa melakukan pemupukan, karena curah hujan"
-      status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, "", last_fertilizer_date, "", next_fertilizer_date, reason, "")
-      recommendation = ""
-      return current_daily_rainfall, status, reason, recommendation
+      if(not season_factor):
+        if current_season == "Basah":
+            reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
+            status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+            recommendation = ""
+            return current_daily_rainfall, status, reason, recommendation
+        elif current_season == "Kering" and next_fertilizer in DRY_SEASON_ONLY:
+            print(reason)
+        elif current_season == "Kering":
+            reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
+            recommendation = "Dolomite, RP, TSP"
+            status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, f"Pupuk alternatif yang disarankan: {recommendation}")
+            return current_daily_rainfall, status, reason, recommendation      
+
+    #Valdasi 2
     elif(not peilscale_factor):
       reason = "Tidak bisa melakukan pemupukan, karena peilscale di atas -51"
-      status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, "", last_fertilizer_date, "", next_fertilizer_date, reason, "")
+      status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
       recommendation = ""
       return current_daily_rainfall, status, reason, recommendation
+    
+    #Validasi 3
     elif(not season_factor):
-      reason = f"Tidak bisa melakukan pemupukan, karena musim {season_factor}"
-      if season_factor == "Wet":
-          status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, "", last_fertilizer_date, "", next_fertilizer_date, reason, "")
+      reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
+      if current_season == "Basah":
+          status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
           recommendation = ""
           return current_daily_rainfall, status, reason, recommendation
-      elif season_factor == "Dry":
+      elif current_season == "Kering":
           print(reason)
 
   #get the last fertilizer's group
@@ -684,7 +660,8 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, df, peilsca
   #check the interval between the last & the next fertilizer
   validate_interval_result = validate_interval_fertilizer(last_group, next_group, last_fertilizer_date, next_fertilizer_date)
 
-  #check the alternative
+  #Check the alternative
+  #If the interval is not valid, get the alternatives
   Alternatives = []
   if (not validate_interval_result):
     if last_group == next_group:
@@ -695,15 +672,33 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, df, peilsca
   else:
     Alternatives = get_all_recommendation(last_group, next_group, last_fertilizer_date, next_fertilizer_date, INTERVAL_TABLE, FERTILIZER_GROUPS)
 
-  #check the specific fertilizer trait
+  #Check the specific fertilizer trait
   #Dolomite
-  Alternatives = validate_dolomite(df, last_fertilizer, last_fertilizer_date, next_fertilizer_date, Alternatives)
+  Alternatives = validate_dolomite(estate_df, last_fertilizer, last_fertilizer_date, next_fertilizer_date, Alternatives)
   #Discard because dry week
-  is_dry_week = validate_dry_week(next_fertilizer, df)
-  if next_fertilizer == "Urea" and is_dry_week >= 3:
+  is_dry_week = validate_dry_week(estate_df)
+  
+  #if current fertilizer is not allowed
+  #3 days dry
+  if next_fertilizer in NOT_ALLOWED_3_DAYS and is_dry_week >= 3:
       reason = "3 hari kebelakang tidak terdapat hujan sama sekali"
-  elif next_fertilizer in ["Urea", "MOP", "HGFB"] and is_dry_week >= 7:
+      Alternatives = [item for item in Alternatives if item not in NOT_ALLOWED_3_DAYS]
+  #7 days dry
+  elif next_fertilizer in NOT_ALLOWED_7_DAYS and is_dry_week >= 7:
       reason = "7 hari kebelakang tidak terdapat hujan sama sekali"
+      Alternatives = [item for item in Alternatives if item not in NOT_ALLOWED_7_DAYS]
+
+  #if current fertilizer is allowed
+  #3 days dry
+  if is_dry_week >= 3:
+      Alternatives = [item for item in Alternatives if item not in NOT_ALLOWED_3_DAYS]
+  #7 days dry
+  elif is_dry_week >= 7:
+      Alternatives = [item for item in Alternatives if item not in NOT_ALLOWED_7_DAYS]
+
+  #Check if current season is dry 
+  if current_season == "Kering" and next_fertilizer in DRY_SEASON_ONLY:
+     Alternatives = [item for item in Alternatives if item in DRY_SEASON_ONLY]
 
   #Join the alternative option
   alternative = ', '.join(Alternatives)
@@ -713,7 +708,7 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, df, peilsca
     recommendation = f"Pupuk alternatif yang disarankan: {alternative}"
 
   # Append to spreadsheet
-  status = append_to_spreadsheet(date_input, username, estate_name, blok_name, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation)
+  status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation)
 
   return current_daily_rainfall, status, reason, recommendation
 
@@ -725,12 +720,12 @@ def validate_dolomite(df, last_fertilizer, last_fertilizer_date, next_fertilizer
   if dolomite_fertilizer in Alternatives:
     return Alternatives  # Dolomite not allowed
 
-  # 1. Check if the last Daily Rainfall (mm) is < 60
+  # 1. Check if the last Daily Rainfall (mm) is >= 60
   last_daily_rainfall = df['Daily Rainfall (mm)'].iloc[-1]
   if last_daily_rainfall >= 60:
     return Alternatives  # Dolomite not allowed
 
-  # 2. Check if Accumulation Rainfall is < 300
+  # 2. Check if Accumulation Rainfall is >= 300
   accumulation_rainfall = df['Accumulation Rainfall -29 days'].iloc[-1]
   if accumulation_rainfall >= 300:
     return Alternatives  # Dolomite not allowed
@@ -749,8 +744,9 @@ def validate_dolomite(df, last_fertilizer, last_fertilizer_date, next_fertilizer
   return Alternatives
 
 # %%
-def validate_dry_week(fertilizer, df):
+def validate_dry_week(df):
   last_days = df['Daily Rainfall (mm)'].iloc[-7:]
+  print(f"last_days: {df.iloc[-7:]}")
 
   no_rain = 0
   for i in last_days:
@@ -785,9 +781,9 @@ def check_peilscale(peilscale):
 # %%
 def check_season(accumulation_rainfall):
   if accumulation_rainfall < 60 :
-    return "Dry"
+    return "Kering"
   elif accumulation_rainfall > 300:
-    return "Wet"
+    return "Basah"
 
 # %%
 def check_rain_in_dry_seasion(daily_rainfall_last_7):
@@ -809,6 +805,7 @@ def validate_water_track(df, current_daily_rainfall, peilscale, next_fertilizer)
 
   # Syarat 1
   validation1 = check_groundwater(accumulation_rainfall, water_surplus)
+  print("validation1", validation1)
 
   # Syarat 2
   print("peilscale", peilscale)
@@ -817,14 +814,16 @@ def validate_water_track(df, current_daily_rainfall, peilscale, next_fertilizer)
 
   # Syarat 3
   season = check_season(accumulation_rainfall)
-  validation3 = season not in ["Wet", "Dry"] # if validation3 has value that means it's either 'Wet' or 'Dry', None means it's Optimal
+  validation3 = season not in ["Basah", "Kering"] # if validation3 has value that means it's either 'Wet' or 'Dry', None means it's Optimal
+  print("season", season)
+  print("validation3", validation3)
 
   # Check if season is 'Dry' with rains around 7 days back
   dry_with_rain = False
-  if (season == "Dry"):
+  if (season == "Kering"):
     dry_with_rain = check_rain_in_dry_seasion(daily_rainfall_last_7)
 
-  return (validation1 and validation2 and validation3), validation1, validation2, season, dry_with_rain
+  return (validation1 and validation2 and validation3), validation1, validation2, validation3, season, dry_with_rain
 
 # %%
 def get_minimal_interval(last_group, next_group):
@@ -976,7 +975,6 @@ def validate_rainfall_data_exists(selected_estate):
          return False
     # --- End Check ---
 
-
     # 2. Check for Missing Dates Before Today
     missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, current_time_date)
 
@@ -1002,7 +1000,6 @@ def validate_rainfall_data_exists(selected_estate):
              messagebox.showerror("Error", f"Gagal memproses kolom Tanggal: {e}")
              return False
 
-
     estate_data_today = df[(df['Estate'] == selected_estate) & (df['Date'].dt.date == today_date)]
 
     if estate_data_today.empty:
@@ -1011,7 +1008,7 @@ def validate_rainfall_data_exists(selected_estate):
                              f"bagi estate {selected_estate} belum dimasukkan.\n\n"
                              "Harap masukkan data hari ini melalui menu 'Masukkan Data Hujan'.")
         return False
-
+    
     # If all checks pass
     print(f"Rainfall data validation passed for {selected_estate}") # Debug print
     return True
@@ -1217,10 +1214,10 @@ def show_rainfall_options():
 # display_analysis_results, show_missing_dates_input (it already does it)
 
 def display_analysis_results(selected_estate, nama_blok, tanggal_rencana, peilscale, tanggal_terakhir,
-                              jenis_terakhir, rencana_jenis, username, curah_hujan, status, reason, recommendation):
+                              jenis_terakhir, rencana_jenis, username, curah_hujan, status, id_analisa, reason, recommendation):
     
     global current_menu, label_tanggal_analisa, label_nama_user, label_curah_hujan, \
-           label_status, label_reason, label_recommendation, label_selected_estate, \
+           label_status, label_id_analisa, label_reason, label_recommendation, label_selected_estate, \
            label_nama_blok, label_tanggal_rencana, label_peilscale_value, \
            label_tanggal_terakhir_value, label_jenis_terakhir_value, \
            label_rencana_jenis_value, back_to_main_button, reanalyze_button  # Add reanalyze_button
@@ -1237,53 +1234,73 @@ def display_analysis_results(selected_estate, nama_blok, tanggal_rencana, peilsc
     current_menu = "analysis_results"
 
     # --- Display Analysis Results ---
+    row_offset = 0
     current_time_input = datetime.datetime.now(CURRENT_TIMEZONE)
     label_tanggal_analisa = tk.Label(root, text=f"Tanggal Analisa: {current_time_input.strftime('%Y-%m-%d %H:%M:%S')}", font=("Arial", 12))
-    label_tanggal_analisa.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+    label_tanggal_analisa.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_nama_user = tk.Label(root, text=f"Nama User: {username}", font=("Arial", 12))
-    label_nama_user.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+    label_nama_user.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_selected_estate = tk.Label(root, text=f"Nama Estate: {selected_estate}", font=("Arial", 12))
-    label_selected_estate.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+    label_selected_estate.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_nama_blok = tk.Label(root, text=f"Nama Blok: {nama_blok}", font=("Arial", 12))
-    label_nama_blok.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
+    label_nama_blok.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_curah_hujan = tk.Label(root, text=f"Curah Hujan: {curah_hujan}", font=("Arial", 12))
-    label_curah_hujan.grid(row=4, column=0, padx=10, pady=5, sticky="ew")
+    label_curah_hujan.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_peilscale_value = tk.Label(root, text=f"Nilai Peilscale: {peilscale}", font=("Arial", 12))
-    label_peilscale_value.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
+    label_peilscale_value.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_jenis_terakhir_value = tk.Label(root, text=f"Jenis Pupuk Terakhir: {jenis_terakhir}", font=("Arial", 12, "bold"))
-    label_jenis_terakhir_value.grid(row=6, column=0, padx=10, pady=5, sticky="ew")
+    label_jenis_terakhir_value.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_tanggal_terakhir_value = tk.Label(root, text=f"Tanggal Pupuk Terakhir: {tanggal_terakhir}", font=("Arial", 12, "bold"))
-    label_tanggal_terakhir_value.grid(row=7, column=0, padx=10, pady=5, sticky="ew")
+    label_tanggal_terakhir_value.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_rencana_jenis_value = tk.Label(root, text=f"Rencana Jenis Pupuk: {rencana_jenis}", font=("Arial", 12, "bold"))
-    label_rencana_jenis_value.grid(row=8, column=0, padx=10, pady=5, sticky="ew")
+    label_rencana_jenis_value.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_tanggal_rencana = tk.Label(root, text=f"Tanggal Rencana Pupuk: {tanggal_rencana}", font=("Arial", 12, "bold"))
-    label_tanggal_rencana.grid(row=9, column=0, padx=10, pady=5, sticky="ew")
+    label_tanggal_rencana.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_status = tk.Label(root, text=f"Status: {status}", font=("Arial", 12, "bold"))
-    label_status.grid(row=10, column=0, padx=10, pady=5, sticky="ew")
+    label_status.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
+
+    label_id_analisa = tk.Label(root, text=f"ID Analisa: {id_analisa}", font=("Arial", 12, "bold"), fg=ANALISA_ID_TEXT_COLOR)
+    label_id_analisa.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_reason = tk.Label(root, text=f"Alasan: {reason}", font=("Arial", 12))
-    label_reason.grid(row=11, column=0, padx=10, pady=5, sticky="ew")
+    label_reason.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     label_recommendation = tk.Label(root, text=f"Rekomendasi: {recommendation}", font=("Arial", 12))
-    label_recommendation.grid(row=12, column=0, padx=10, pady=5, sticky="ew")
+    label_recommendation.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
 
     # --- Re-analyze Button --- (Row 13)
     reanalyze_button = tk.Button(root, text="Reanalyze", command=show_estate_options_for_analysis, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
-    reanalyze_button.grid(row=13, column=0, padx=10, pady=10)
+    reanalyze_button.grid(row=row_offset, column=0, padx=10, pady=10)
+    row_offset += 1
 
     # --- Back to Main Menu Button --- (Row 14)
     back_to_main_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=MAIN_MENU_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
-    back_to_main_button.grid(row=14, column=0, padx=10, pady=10)
+    back_to_main_button.grid(row=row_offset, column=0, padx=10, pady=10)
+    row_offset += 1
 
     root.columnconfigure(0, weight=1)
 
@@ -1665,14 +1682,57 @@ def submit_analysis(selected_estate, blok, peilscale,
     if not username.strip():
         messagebox.showerror("Error", "Tolong masukkan username di dalam main menu.")
         return
+    
+    # --- Duplicate Data Check ---
+    estate_df = df[df['Estate'] == selected_estate]
+    duplicate_rows = estate_df[estate_df.duplicated(subset=['Date'], keep=False)]
+
+    if not duplicate_rows.empty:
+        # Find the dates that occur multiple times
+        duplicate_rows['Date'] = duplicate_rows['Date'].dt.date
+        duplicate_dates = duplicate_rows['Date'].value_counts()
+        duplicate_dates_multiple = duplicate_dates[duplicate_dates > 1]
+        
+        # Show the message box with the duplicate dates
+        duplicate_dates_str = "\n".join([f"{date}: {count} kemunculan" for date, count in duplicate_dates_multiple.items()])
+        messagebox.showerror("Error", f"Terdapat data duplikat untuk tanggal:\n{duplicate_dates_str}\nSilahkan hubungi agronomy team")
+        return
+    else:
+        print("No duplicate rows found.")
+
+    # Checkpoint
+    # --- Missing Data Check (Full Range) ---
+    estate_df['Date'] = pd.to_datetime(estate_df['Date'], errors='coerce').dt.date
+    available_dates = set(estate_df['Date'].dropna())
+
+    # Define full date range from first date in data up to one day before the planned date
+    start_date = min(available_dates)
+    end_date = tanggal_rencana_pupuk_dt.date() - datetime.timedelta(days=1)
+    expected_dates = set(pd.date_range(start=start_date, end=end_date).date)
+
+    # Find missing dates
+    missing_dates = sorted(expected_dates - available_dates)
+
+    if missing_dates:
+        missing_str = "\n".join([d.strftime("%Y-%m-%d") for d in missing_dates])
+        messagebox.showwarning(
+            "Data Curah Hujan Tidak Lengkap",
+            f"Ditemukan data curah hujan yang hilang dari {start_date} sampai {end_date}:\n\n{missing_str}\n\nSilakan lengkapi data sebelum melanjutkan analisis."
+        )
+        return
 
     # --- Rainfall Data Validation ---
     if not validate_rainfall_data_exists(selected_estate):
         return # Exit if rainfall validation fails
+    
+    # Create ID Analisa
+    random_characters = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+    id_analisa = f"PA-{current_time_date.strftime('%Y%m%d')}-{random_characters}"
 
     # --- Proceed with analysis ---
     current_daily_rainfall, status, reason, recommendation = analyze_fertilizer(
-        datetime.datetime.now(CURRENT_TIMEZONE), username, selected_estate, blok, df,
+        datetime.datetime.now(CURRENT_TIMEZONE), username, selected_estate, blok, id_analisa, df,
         peilscale_int, jenis_pupuk_terakhir, tanggal_pupuk_terakhir_dt, # Pass datetime object
         rencana_jenis_pupuk, tanggal_rencana_pupuk_dt # Pass datetime object
     )
@@ -1681,7 +1741,7 @@ def submit_analysis(selected_estate, blok, peilscale,
     display_analysis_results(
         selected_estate, blok, tanggal_rencana_pupuk_str, peilscale, # Pass original peilscale string
         tanggal_pupuk_terakhir_str, jenis_pupuk_terakhir, rencana_jenis_pupuk,
-        username, current_daily_rainfall, status, reason, recommendation
+        username, current_daily_rainfall, status, id_analisa, reason, recommendation
     )
 
 
@@ -2002,12 +2062,17 @@ def submit_estate_for_analysis(selected_estate, nama_blok, peilscale, jenis_tera
     # Convert string to integer
     peilscale = int(peilscale)
 
-    current_daily_rainfall, status, reason, recommendation = analyze_fertilizer(date_input, username, selected_estate, nama_blok, df, peilscale, jenis_terakhir, tanggal_terakhir, rencana_jenis, tanggal_rencana)
+    # Create ID Analisa
+    random_characters = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+    id_analisa = f"PA-{current_time_date.strftime('%Y%m%d')}-{random_characters}"
+
+    current_daily_rainfall, status, reason, recommendation = analyze_fertilizer(date_input, username, selected_estate, nama_blok, id_analisa, df, peilscale, jenis_terakhir, tanggal_terakhir, rencana_jenis, tanggal_rencana)
 
     # Display the results
     display_analysis_results(
         selected_estate, nama_blok, tanggal_rencana, peilscale, tanggal_terakhir,
-        jenis_terakhir, rencana_jenis, username, current_daily_rainfall, status, reason, recommendation
+        jenis_terakhir, rencana_jenis, username, current_daily_rainfall, status, id_analisa, id_analisa, reason, recommendation
     )
     # previous_menu = "main"  # No longer going back to main immediately
     # cancel_to_main()
@@ -2149,7 +2214,7 @@ def main_process():
            label_jenis_pupuk_terakhir, label_rencana_jenis_pupuk, \
            button_tanggal_rencana_pupuk, button_tanggal_pupuk_terakhir, \
            label_tanggal_analisa, label_nama_user, label_curah_hujan, \
-           label_status, label_reason, label_recommendation, label_selected_estate, \
+           label_status, label_id_analisa, label_reason, label_recommendation, label_selected_estate, \
            label_nama_blok, label_tanggal_rencana, label_peilscale_value, \
            label_tanggal_terakhir_value, label_jenis_terakhir_value, \
            label_rencana_jenis_value, back_to_main_button, reanalyze_button, \
@@ -2205,6 +2270,7 @@ def main_process():
     label_nama_user = None
     label_curah_hujan = None
     label_status = None
+    label_id_analisa = None
     label_reason = None
     label_recommendation = None
     label_selected_estate = None
