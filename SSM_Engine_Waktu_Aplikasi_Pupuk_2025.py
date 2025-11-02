@@ -617,16 +617,20 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa,
     return current_daily_rainfall, status, reason, recommendation
 
   #check the accumulated rainfall data
-  validate_water, rain_factor, peilscale_factor, season_factor, current_season, dry_with_rain = validate_water_track(estate_df, current_daily_rainfall, peilscale, next_fertilizer)
+  validate_water, rain_factor, peilscale_factor, season_factor, current_season, dry_with_rain, accumulation_rainfall, water_surplus, daily_rainfall_last_7 = validate_water_track(estate_df, current_daily_rainfall, peilscale, next_fertilizer)
   if(not validate_water):
     # Validasi 1
     if(not rain_factor):
       if(not season_factor):
         if current_season == "Basah":
-            reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
-            status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
-            recommendation = ""
-            return current_daily_rainfall, status, reason, recommendation
+            print(f"water surplus2: {water_surplus}")
+            if water_surplus == 0.0:
+               print("Bulan basah & water surplus 0")
+            else:
+              reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
+              status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+              recommendation = ""
+              return current_daily_rainfall, status, reason, recommendation
         elif current_season == "Kering" and next_fertilizer in DRY_SEASON_ONLY:
             print(reason)
         elif current_season == "Kering":
@@ -646,9 +650,14 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa,
     elif(not season_factor):
       reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
       if current_season == "Basah":
-          status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
-          recommendation = ""
-          return current_daily_rainfall, status, reason, recommendation
+          print(f"water surplus3: {water_surplus}")
+          if water_surplus == 0.0:
+             print("Bulan basah & water surplus 0")
+             reason = ""
+          else:
+            status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+            recommendation = ""
+            return current_daily_rainfall, status, reason, recommendation
       elif current_season == "Kering":
           print(reason)
 
@@ -797,11 +806,13 @@ def check_rain_in_dry_seasion(daily_rainfall_last_7):
 
 # %%
 def validate_water_track(df, current_daily_rainfall, peilscale, next_fertilizer):
-
   last_row = df.iloc[-1]
   accumulation_rainfall = last_row['Accumulation Rainfall -29 days']
+  print(f"accumulation_rainfall: {accumulation_rainfall}")
   water_surplus = last_row['Water Surplus']
+  print(f"water_surplus: {water_surplus}")
   daily_rainfall_last_7 = df['Daily Rainfall (mm)'].iloc[-7:]
+  print(f"daily_rainfall_last_7: {daily_rainfall_last_7.tolist()}")
 
   # Syarat 1
   validation1 = check_groundwater(accumulation_rainfall, water_surplus)
@@ -823,7 +834,7 @@ def validate_water_track(df, current_daily_rainfall, peilscale, next_fertilizer)
   if (season == "Kering"):
     dry_with_rain = check_rain_in_dry_seasion(daily_rainfall_last_7)
 
-  return (validation1 and validation2 and validation3), validation1, validation2, validation3, season, dry_with_rain
+  return (validation1 and validation2 and validation3), validation1, validation2, validation3, season, dry_with_rain, accumulation_rainfall, water_surplus, daily_rainfall_last_7
 
 # %%
 def get_minimal_interval(last_group, next_group):
@@ -2223,7 +2234,7 @@ def main_process():
 
     # --- Initialize App ---
     root = tk.Tk()
-    root.title("Engine Waktu Aplikasi Pemupukan (SSM)")
+    root.title("Engine Waktu Aplikasi Pemupukan (TDK)")
     root.attributes('-fullscreen', True)
 
     # --- Initialize State Variables ---
