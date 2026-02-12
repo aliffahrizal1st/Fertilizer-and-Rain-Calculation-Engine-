@@ -100,6 +100,7 @@ NOT_ALLOWED_3_DAYS = ["Urea"]
 NOT_ALLOWED_7_DAYS = ["Urea", "MOP", "HGFB"]
 
 ESTATE_OPTIONS = ["Inti", "Plasma"] # Use constant for options
+DIVISION_OPTIONS = ["1", "2", "3", "4", "5"]
 
 INTERVAL_TABLE = {
     "NPK": {"NPK": 60, "Urea": 14, "RP": 30, "TSP": 30, "Kieserite": 14, "Dolomite": 30, "MOP": 14, "HGFB": 30, "Zincop": 30, "CuSO4": 30},
@@ -177,15 +178,20 @@ def get_fertilizer_group(fertilizer):
 
 
 # %%
-def get_missing_dates(df, estate_name, current_time_date): # current_time_date is tz-aware datetime.datetime
+def get_missing_dates(df, estate_name,  division_number, current_time_date): # current_time_date is tz-aware datetime.datetime
     """Calculates the missing dates for a given estate."""
     global CURRENT_TIMEZONE
 
+    print(f"Debug: Starting get_missing_dates for {estate_name} & {division_number} as of {current_time_date}")
+    print(f"Debug: estate data head:\n{df.head()}")
+
     # Filter and sort data
-    estate_data = df[(df['Estate'] == estate_name)].sort_values(by='Date')
+    estate_data = df[(df['Estate'] == estate_name) & (df['Division'] == division_number)].sort_values(by='Date')
+
+    print(f"Debug: estate data after filtering:\n{estate_data.head()}")
 
     if estate_data.empty:
-        print(f"No previous data found for {estate_name}. Cannot determine missing dates.")
+        print(f"No previous data found for {estate_name} & {division_number}. Cannot determine missing dates.")
         return pd.DatetimeIndex([]), None, 0
 
     # --- Ensure 'Date' column is datetime ---
@@ -195,10 +201,10 @@ def get_missing_dates(df, estate_name, current_time_date): # current_time_date i
             estate_data = estate_data.assign(Date=pd.to_datetime(estate_data['Date'], errors='coerce'))
             estate_data = estate_data.dropna(subset=['Date'])
         except Exception as e:
-            print(f"Error converting 'Date' column to datetime for {estate_name}: {e}")
+            print(f"Error converting 'Date' column to datetime for {estate_name} & {division_number}: {e}")
             return pd.DatetimeIndex([]), None, 0
         if estate_data.empty:
-            print(f"No valid dates found for {estate_name} after conversion.")
+            print(f"No valid dates found for {estate_name} & {division_number} after conversion.")
             return pd.DatetimeIndex([]), None, 0
     # --- End datetime check ---
 
@@ -312,6 +318,20 @@ def load_database(sheet_url, json_path):
             messagebox.showerror("Data Error", "Kolom 'Daily Rainfall (mm)' tidak ditemukan di spreadsheet.")
             return pd.DataFrame()
 
+        if 'Estate' in df_loaded.columns:
+            df_loaded['Estate'] = df_loaded['Estate'].fillna('').astype(str)
+        else:
+            messagebox.showerror("Data Error", "Kolom 'Estate' tidak ditemukan di spreadsheet.")
+            return pd.DataFrame()
+
+        if 'Division' in df_loaded.columns:
+            df_loaded['Division'] = df_loaded['Division'].fillna('').astype(str)
+        else:
+            messagebox.showerror("Data Error", "Kolom 'Division' tidak ditemukan di spreadsheet.")
+            return pd.DataFrame()
+        
+        print(f"{df_loaded['Estate'].dtype}, {df_loaded['Division'].dtype}")
+
         # Ensure all calculation columns exist, add them with default NaN or 0 if not
         calc_columns = ['Accumulation Rainfall -29 days', 'Evapotranspiration',
                         'Water Balance', 'Soil Water Reserve (mm)', 'Water Surplus']
@@ -338,7 +358,7 @@ def load_database(sheet_url, json_path):
         traceback.print_exc() # Print full traceback for debugging
         return pd.DataFrame()
 
-def append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation):
+def append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation):
     """Appends analysis results to the 'Output' Google Sheet."""
     global sheet_output
 
@@ -360,7 +380,7 @@ def append_to_spreadsheet(date_input, username, estate_name, blok_name, id_anali
         # --- End date formatting ---
 
         output_data = [
-            date_input.strftime('%Y-%m-%d %H:%M:%S'), username, estate_name,
+            date_input.strftime('%Y-%m-%d %H:%M:%S'), username, estate_name, division_number,
             blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer,
             last_fert_date_str, # Use formatted string
             next_fertilizer,
@@ -378,7 +398,7 @@ def append_to_spreadsheet(date_input, username, estate_name, blok_name, id_anali
 # NOTE: The remove_old_data function interacts directly with the sheet by row number.
 # This can be brittle if the sheet structure changes or rows are manually deleted/inserted.
 # Consider using gspread's batch_update or finding rows by criteria before deleting if needed.
-def remove_old_data(df, date_to_remove, estate_name):
+def remove_old_data(df, date_to_remove, estate_name, division_number):
     """Removes data for a specific date and estate from DataFrame and Spreadsheet."""
     global sheet_data
     if sheet_data is None: return df # Cannot modify sheet if not connected
@@ -389,12 +409,12 @@ def remove_old_data(df, date_to_remove, estate_name):
 
         # Remove from DataFrame
         original_len = len(df)
-        indices_to_drop = df[(df['Estate'] == estate_name) & (df['Date'] == date_to_remove_dt)].index
+        indices_to_drop = df[(df['Estate'] == estate_name) & (df['Division'] == division_number) & (df['Date'] == date_to_remove_dt)].index
         if not indices_to_drop.empty:
             df.drop(indices_to_drop, inplace=True)
-            print(f"Removed {len(indices_to_drop)} row(s) from DataFrame for {estate_name} on {date_str_format}")
+            print(f"Removed {len(indices_to_drop)} row(s) from DataFrame for {estate_name}-{division_number} on {date_str_format}")
         else:
-             print(f"No matching row found in DataFrame for {estate_name} on {date_str_format}")
+             print(f"No matching row found in DataFrame for {estate_name}-{division_number} on {date_str_format}")
 
         # Remove from spreadsheet (find all matching rows and delete)
         # Use findall to get all matching cells for the date in the first column
@@ -404,7 +424,7 @@ def remove_old_data(df, date_to_remove, estate_name):
             for cell in cells:
                 row_data = sheet_data.row_values(cell.row)
                 # Check if the estate in that row also matches
-                if len(row_data) > 1 and row_data[1] == estate_name: # Assuming Estate is in column 2 (index 1)
+                if len(row_data) > 1 and row_data[1] == estate_name and row_data[2] == division_number: # Assuming Estate is in column 2 (index 1)
                     rows_to_delete_sheet.append(cell.row)
 
         if rows_to_delete_sheet:
@@ -413,14 +433,14 @@ def remove_old_data(df, date_to_remove, estate_name):
             for row_num in rows_to_delete_sheet:
                  try:
                      sheet_data.delete_rows(row_num)
-                     print(f"Deleted row {row_num} from spreadsheet for {estate_name} on {date_str_format}")
+                     print(f"Deleted row {row_num} from spreadsheet for {estate_name}-{division_number} on {date_str_format}")
                  except Exception as delete_err:
                      print(f"Error deleting row {row_num} from spreadsheet: {delete_err}")
                      # Decide if you want to stop or continue if a deletion fails
                      # return df # Example: Stop if deletion fails
 
         else:
-            print(f"Data for {date_str_format} and estate {estate_name} not found in spreadsheet for deletion.")
+            print(f"Data for {date_str_format} and estate {estate_name}-{division_number} not found in spreadsheet for deletion.")
 
         return df.reset_index(drop=True) # Reset index after dropping rows
 
@@ -435,7 +455,7 @@ def remove_old_data(df, date_to_remove, estate_name):
 #  ## 6. Core Logic - Rainfall & Water Balance
 
 # %%
-def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
+def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name, division_number):
     """
     Calculates rainfall metrics for a specific date and estate,
     appends to the sheet (dd/mm/yyyy format), and returns the UPDATED ORIGINAL DataFrame.
@@ -465,6 +485,7 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
         df_original['Date'] = pd.to_datetime(df_original['Date']).dt.normalize()
         prev_day_row = df_original[
             (df_original['Estate'] == estate_name) &
+            (df_original['Division'] == division_number) &
             (df_original['Date'].dt.date == prev_day_date)
         ]
 
@@ -474,7 +495,7 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
             previous_soil_water_reserve = pd.to_numeric(swr_val, errors='coerce')
             if pd.isna(previous_soil_water_reserve): previous_soil_water_reserve = 0.0
         else:
-             print(f"Note: No data found for previous day {prev_day_date} for {estate_name}. Assuming SWR=0.")
+             print(f"Note: No data found for previous day {prev_day_date} for {estate_name} - {division_number}. Assuming SWR=0.")
 
         # --- Calculate Accumulation (29 days ENDING YESTERDAY) ---
         start_window_date = calc_date - timedelta(days=29) # Start date is 29 days before calc_date
@@ -483,6 +504,7 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
         # Filter original df for the date window *up to the previous day* AND estate
         window_df = df_original[
              (df_original['Estate'] == estate_name) &
+             (df_original['Division'] == division_number) &
              (df_original['Date'].dt.date >= start_window_date) &
              (df_original['Date'].dt.date <= end_window_date) # Include end_window_date (yesterday)
         ].copy() # Use copy
@@ -509,12 +531,13 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
         # --- Prepare Data for Sheet and DataFrame ---
         date_str_sheet = calc_date.strftime('%d/%m/%Y') # Correct format for sheet
         new_row_values = [
-            date_str_sheet, estate_name, daily_rainfall, accumulation_rainfall, # Use updated accumulation
+            date_str_sheet, estate_name, division_number, daily_rainfall, accumulation_rainfall, # Use updated accumulation
             evapotranspiration, water_balance, soil_water_reserve, water_surplus
         ]
         new_row_dict = {
             'Date': pd.Timestamp(calc_date), # Use Timestamp for DataFrame
             'Estate': estate_name,
+            'Division': division_number,
             'Daily Rainfall (mm)': daily_rainfall,
             'Accumulation Rainfall -29 days': accumulation_rainfall, # Use updated accumulation
             'Evapotranspiration': evapotranspiration,
@@ -534,7 +557,7 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
 
         df_updated = pd.concat([df_original, pd.DataFrame([new_row_dict])], ignore_index=True)
         df_updated = df_updated.sort_values(by='Date').reset_index(drop=True)
-        print(f"Successfully calculated and added data for {estate_name} on {date_str_sheet}")
+        print(f"Successfully calculated and added data for {estate_name} - {division_number} on {date_str_sheet}")
         return df_updated
 
     except ValueError as ve: # Catch specific validation errors
@@ -564,13 +587,13 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name):
 
 
 # %%
-def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa, df, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date):
+def analyze_fertilizer(date_input, username, estate_name, division_number, blok_name, id_analisa, df, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date):
 
   reason = ""
   recommendation = ""
   
   # Filter the DataFrame and make a copy to avoid SettingWithCopyWarning
-  estate_df = df[df['Estate'] == estate_name].copy()
+  estate_df = df[(df['Estate'] == estate_name) & (df['Division'] == division_number)].copy()
 
   # Convert 'Date' column to datetime.date safely
   estate_df['Date'] = pd.to_datetime(estate_df['Date'], errors='coerce').dt.date
@@ -606,14 +629,14 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa,
   gap_days = (next_fertilizer_date.date() - last_available_date).days
   if gap_days >= 2:
       reason += f"Waktu curah hujan terakhir terlalu jauh dengan tanggal pemupukan selanjutnya. Terdapat {gap_days} hari kosong."
-      status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+      status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
       return current_daily_rainfall, status, reason, recommendation
 
   #check if today's rainfall is greater than or equal to 60
   if current_daily_rainfall >= 60:
     reason = "Curah hujan lebih dari 60 mm, pemupukan dihentikan"
     print(reason)
-    status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+    status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
     return current_daily_rainfall, status, reason, recommendation
 
   #check the accumulated rainfall data
@@ -628,7 +651,7 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa,
                print("Bulan basah & water surplus 0")
             else:
               reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
-              status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+              status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
               recommendation = ""
               return current_daily_rainfall, status, reason, recommendation
         elif current_season == "Kering" and next_fertilizer in DRY_SEASON_ONLY:
@@ -636,13 +659,13 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa,
         elif current_season == "Kering":
             reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
             recommendation = "Dolomite, RP, TSP"
-            status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, f"Pupuk alternatif yang disarankan: {recommendation}")
+            status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, f"Pupuk alternatif yang disarankan: {recommendation}")
             return current_daily_rainfall, status, reason, recommendation      
 
     #Valdasi 2
     elif(not peilscale_factor):
       reason = "Tidak bisa melakukan pemupukan, karena peilscale di atas -51"
-      status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+      status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
       recommendation = ""
       return current_daily_rainfall, status, reason, recommendation
     
@@ -655,7 +678,7 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa,
              print("Bulan basah & water surplus 0")
              reason = ""
           else:
-            status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+            status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
             recommendation = ""
             return current_daily_rainfall, status, reason, recommendation
       elif current_season == "Kering":
@@ -717,7 +740,7 @@ def analyze_fertilizer(date_input, username, estate_name, blok_name, id_analisa,
     recommendation = f"Pupuk alternatif yang disarankan: {alternative}"
 
   # Append to spreadsheet
-  status = append_to_spreadsheet(date_input, username, estate_name, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation)
+  status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation)
 
   return current_daily_rainfall, status, reason, recommendation
 
@@ -959,7 +982,7 @@ def hide_rainfall_data_entry_widgets(): # Make sure this is defined
 
 
 # %%
-def validate_rainfall_data_exists(selected_estate):
+def validate_rainfall_data_exists(selected_estate, selected_division):
     """
     Checks if rainfall data exists for the selected estate,
     if there are no missing dates before today, and if today's data exists.
@@ -967,15 +990,17 @@ def validate_rainfall_data_exists(selected_estate):
     """
     global df, current_time_date # Need access to these globals
 
-    # 1. Basic Estate Check (Redundant if called after submit_analysis checks, but safe)
     if not selected_estate:
-        # This case might not be reachable if submit_analysis checks first
         messagebox.showerror("Error", "Estate belum dipilih.")
         return False
-    # Use the constant if defined, otherwise the list
-    valid_estates = ["Inti", "Plasma"] # Or use ESTATE_OPTIONS constant
-    if selected_estate not in valid_estates:
+    if selected_estate not in ESTATE_OPTIONS:
          messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'.")
+         return False
+    if not selected_division:
+        messagebox.showerror("Error", "Estate belum dipilih.")
+        return False
+    if selected_division not in DIVISION_OPTIONS:
+         messagebox.showerror("Error", f"Nomor divisi invalid: '{selected_division}'.")
          return False
 
     # --- Check current_time_date type ---
@@ -987,13 +1012,13 @@ def validate_rainfall_data_exists(selected_estate):
     # --- End Check ---
 
     # 2. Check for Missing Dates Before Today
-    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, current_time_date)
+    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, selected_division, current_time_date)
 
     if total_missing_dates > 0:
         # Format last_reported_time safely - it's already timezone-aware from get_missing_dates
         last_reported_str = format_datetime(last_reported_time.date()) if last_reported_time else "awal data"
         messagebox.showerror("Data Tidak Lengkap",
-                             f"Terdapat {total_missing_dates} hari data hujan yang belum diinput untuk estate {selected_estate} "
+                             f"Terdapat {total_missing_dates} hari data hujan yang belum diinput untuk estate {selected_estate} - {selected_division} "
                              f"sejak {last_reported_str}.\n\n"
                              "Harap lengkapi data melalui menu 'Masukkan Data Hujan' → 'Masukkan Data Hujan Baru'")
         return False
@@ -1011,17 +1036,17 @@ def validate_rainfall_data_exists(selected_estate):
              messagebox.showerror("Error", f"Gagal memproses kolom Tanggal: {e}")
              return False
 
-    estate_data_today = df[(df['Estate'] == selected_estate) & (df['Date'].dt.date == today_date)]
+    estate_data_today = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division) & (df['Date'].dt.date == today_date)]
 
     if estate_data_today.empty:
         messagebox.showerror("Data Tidak Lengkap",
                              f"Data curah hujan untuk hari ini ({format_datetime(today_date)}) "
-                             f"bagi estate {selected_estate} belum dimasukkan.\n\n"
+                             f"bagi estate {selected_estate} - {selected_division} belum dimasukkan.\n\n"
                              "Harap masukkan data hari ini melalui menu 'Masukkan Data Hujan'.")
         return False
     
     # If all checks pass
-    print(f"Rainfall data validation passed for {selected_estate}") # Debug print
+    print(f"Rainfall data validation passed for {selected_estate} - {selected_division}") # Debug print
     return True
 
 # %% [markdown]
@@ -1224,7 +1249,7 @@ def show_rainfall_options():
 # show_add_rainfall_entry, show_rainfall_data_entry, show_estate_options_for_analysis,
 # display_analysis_results, show_missing_dates_input (it already does it)
 
-def display_analysis_results(selected_estate, nama_blok, tanggal_rencana, peilscale, tanggal_terakhir,
+def display_analysis_results(selected_estate, selected_division, nama_blok, tanggal_rencana, peilscale, tanggal_terakhir,
                               jenis_terakhir, rencana_jenis, username, curah_hujan, status, id_analisa, reason, recommendation):
     
     global current_menu, label_tanggal_analisa, label_nama_user, label_curah_hujan, \
@@ -1257,6 +1282,10 @@ def display_analysis_results(selected_estate, nama_blok, tanggal_rencana, peilsc
 
     label_selected_estate = tk.Label(root, text=f"Nama Estate: {selected_estate}", font=("Arial", 12))
     label_selected_estate.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
+    row_offset += 1
+
+    label_selected_division = tk.Label(root, text=f"Nomor Divisi: {selected_division}", font=("Arial", 12))
+    label_selected_division.grid(row=row_offset, column=0, padx=10, pady=5, sticky="ew")
     row_offset += 1
 
     label_nama_blok = tk.Label(root, text=f"Nama Blok: {nama_blok}", font=("Arial", 12))
@@ -1317,7 +1346,7 @@ def display_analysis_results(selected_estate, nama_blok, tanggal_rencana, peilsc
 
 
 # Modify show_missing_dates_input slightly for clarity
-def show_missing_dates_input(selected_estate, missing_dates_list):
+def show_missing_dates_input(selected_estate, selected_division, missing_dates_list):
     global missing_dates_widgets, label_missing_dates_title, submit_missing_dates_button, \
            back_button, main_menu_button, previous_menu, current_menu, \
            canvas, scrollbar, inner_frame
@@ -1336,7 +1365,7 @@ def show_missing_dates_input(selected_estate, missing_dates_list):
     # --- END ROOT RESET ---
 
     # --- Title (On Root) ---
-    label_missing_dates_title = tk.Label(root, text=f"Masukkan data hujan untuk tanggal yang belum diinput ({selected_estate}):", font=("Arial", 12, "bold"))
+    label_missing_dates_title = tk.Label(root, text=f"Masukkan data hujan untuk tanggal yang belum diinput ({selected_estate} - {selected_division}):", font=("Arial", 12, "bold"))
     label_missing_dates_title.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
 
     # --- Create Scrollable Area (On Root) ---
@@ -1373,7 +1402,7 @@ def show_missing_dates_input(selected_estate, missing_dates_list):
 
     # --- Buttons (On Root) ---
     button_row = 2
-    submit_missing_dates_button = tk.Button(root, text="Submit Data", command=lambda: submit_missing_dates(selected_estate, missing_dates_list), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
+    submit_missing_dates_button = tk.Button(root, text="Submit Data", command=lambda: submit_missing_dates(selected_estate, selected_division, missing_dates_list), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
     submit_missing_dates_button.grid(row=button_row, column=0, padx=10, pady=10)
     button_row += 1
     back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
@@ -1406,17 +1435,29 @@ def show_ESTATE_OPTIONS():
     hide_all_widgets()
 
     current_menu = "estate"
+
     label_estate_option = tk.Label(root, text="Pilih estate (Inti/Plasma):", font=("Arial", 12))
     label_estate_option.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+
     ESTATE_OPTIONS = ["Inti", "Plasma"]
     combobox_estate = ttk.Combobox(root, values=ESTATE_OPTIONS, width=30, font=("Arial", 10))
     combobox_estate.grid(row=1, column=0, padx=10, pady=10)
-    submit_estate_button = tk.Button(root, text="Submit Estate", command=lambda: submit_estate(combobox_estate.get()), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
-    submit_estate_button.grid(row=2, column=0, padx=10, pady=10)
+
+    label_estate_option = tk.Label(root, text="Pilih Divisi:", font=("Arial", 12))
+    label_estate_option.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+
+    DIVISION_OPTIONS = ["1", "2", "3", "4", "5"]
+    combobox_division = ttk.Combobox(root, values=DIVISION_OPTIONS, width=30, font=("Arial", 10))
+    combobox_division.grid(row=3, column=0, padx=10, pady=10)
+
+    submit_estate_button = tk.Button(root, text="Submit Estate", command=lambda: submit_estate(combobox_estate.get(), combobox_division.get()), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
+    submit_estate_button.grid(row=4, column=0, padx=10, pady=10)
+
     back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
-    back_button.grid(row=3, column=0, padx=10, pady=10)
+    back_button.grid(row=5, column=0, padx=10, pady=10)
+
     main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=MAIN_MENU_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
-    main_menu_button.grid(row=4, column=0, padx=10, pady=10)
+    main_menu_button.grid(row=6, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
 
@@ -1449,21 +1490,28 @@ def show_estate_options_for_analysis():
     ESTATE_OPTIONS = ["Inti", "Plasma"]
     combobox_estate = ttk.Combobox(root, values=ESTATE_OPTIONS, width=30, font=("Arial", 10))
     combobox_estate.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+    
+    label_estate_option = tk.Label(root, text="Pilih Divisi:", font=("Arial", 12))
+    label_estate_option.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+
+    DIVISION_OPTIONS = ["1", "2", "3", "4", "5"]
+    combobox_division = ttk.Combobox(root, values=DIVISION_OPTIONS, width=30, font=("Arial", 10))
+    combobox_division.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
 
     label_blok = tk.Label(root, text="Masukkan Nama Blok:", font=("Arial", 12))
-    label_blok.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+    label_blok.grid(row=4, column=0, padx=10, pady=5, sticky="ew")
 
     entry_blok = tk.Entry(root, font=("Arial", 10))
-    entry_blok.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
+    entry_blok.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
 
     label_tanggal_rencana_pupuk = tk.Label(root, text="Masukkan tanggal rencana pupuk:", font=("Arial", 12))
-    label_tanggal_rencana_pupuk.grid(row=4, column=0, padx=10, pady=5, sticky="ew")
+    label_tanggal_rencana_pupuk.grid(row=6, column=0, padx=10, pady=5, sticky="ew")
 
     entry_tanggal_rencana_pupuk = tk.Entry(root, font=("Arial", 10))
-    entry_tanggal_rencana_pupuk.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
+    entry_tanggal_rencana_pupuk.grid(row=7, column=0, padx=10, pady=5, sticky="ew")
 
     button_tanggal_rencana_pupuk = tk.Button(root, text="Select Date", command=lambda: get_date(entry_tanggal_rencana_pupuk), font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) #Added button and color
-    button_tanggal_rencana_pupuk.grid(row=5, column=1, padx=5, pady=5) # Place button next to entry
+    button_tanggal_rencana_pupuk.grid(row=7, column=1, padx=5, pady=5) # Place button next to entry
 
     label_tanggal_pupuk_terakhir = tk.Label(root, text="Masukkan tanggal pupuk terakhir:", font=("Arial", 12))
     label_tanggal_pupuk_terakhir.grid(row=8, column=0, padx=10, pady=5, sticky="ew")
@@ -1475,25 +1523,26 @@ def show_estate_options_for_analysis():
     button_tanggal_pupuk_terakhir.grid(row=9, column=1, padx=5, pady=5) # Place button next to entry
 
     label_peilscale = tk.Label(root, text="Masukkan nilai Peilscale:", font=("Arial", 12))
-    label_peilscale.grid(row=6, column=0, padx=10, pady=5, sticky="ew")
+    label_peilscale.grid(row=10, column=0, padx=10, pady=5, sticky="ew")
 
     entry_peilscale = tk.Entry(root, font=("Arial", 10))
-    entry_peilscale.grid(row=7, column=0, padx=10, pady=5, sticky="ew")
+    entry_peilscale.grid(row=11, column=0, padx=10, pady=5, sticky="ew")
 
     label_jenis_pupuk_terakhir = tk.Label(root, text="Masukkan jenis pupuk terakhir:", font=("Arial", 12))
-    label_jenis_pupuk_terakhir.grid(row=10, column=0, padx=10, pady=5, sticky="ew")
+    label_jenis_pupuk_terakhir.grid(row=12, column=0, padx=10, pady=5, sticky="ew")
 
     combobox_jenis_pupuk_terakhir = ttk.Combobox(root, values=FERTILIZER_TYPE, width=30, font=("Arial", 10))
-    combobox_jenis_pupuk_terakhir.grid(row=11, column=0, padx=10, pady=5, sticky="ew")
+    combobox_jenis_pupuk_terakhir.grid(row=13, column=0, padx=10, pady=5, sticky="ew")
 
     label_rencana_jenis_pupuk = tk.Label(root, text="Masukkan rencana jenis pupuk:", font=("Arial", 12))
-    label_rencana_jenis_pupuk.grid(row=12, column=0, padx=10, pady=5, sticky="ew")
+    label_rencana_jenis_pupuk.grid(row=14, column=0, padx=10, pady=5, sticky="ew")
 
     combobox_rencana_jenis_pupuk = ttk.Combobox(root, values=FERTILIZER_TYPE, width=30, font=("Arial", 10))
-    combobox_rencana_jenis_pupuk.grid(row=13, column=0, padx=10, pady=5, sticky="ew")
+    combobox_rencana_jenis_pupuk.grid(row=15, column=0, padx=10, pady=5, sticky="ew")
 
     submit_estate_button = tk.Button(root, text="Submit", command=lambda: submit_analysis(
         combobox_estate.get(),
+        combobox_division.get(),
         entry_blok.get(),
         entry_peilscale.get(),
         combobox_jenis_pupuk_terakhir.get(),
@@ -1501,10 +1550,10 @@ def show_estate_options_for_analysis():
         combobox_rencana_jenis_pupuk.get(),
         entry_tanggal_rencana_pupuk.get()
     ), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
-    submit_estate_button.grid(row=14, column=0, padx=10, pady=10)
+    submit_estate_button.grid(row=16, column=0, padx=10, pady=10)
 
     back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
-    back_button.grid(row=15, column=0, padx=10, pady=10)
+    back_button.grid(row=17, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
 
@@ -1526,27 +1575,34 @@ def show_ESTATE_OPTIONS_for_add_rainfall():
     root.columnconfigure(1, weight=0)
     # --- END ROOT RESET ---
 
-    label_estate_option = tk.Label(root, text="Pilih estate (Inti/Plasma):", font=("Arial", 12))
+    label_estate_option = tk.Label(root, text="Pilih Estate (Inti/Plasma):", font=("Arial", 12))
     label_estate_option.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
     ESTATE_OPTIONS = ["Inti", "Plasma"]
     combobox_estate = ttk.Combobox(root, values=ESTATE_OPTIONS, width=30, font=("Arial", 10))
     combobox_estate.grid(row=1, column=0, padx=10, pady=10)
 
-    submit_estate_check_button = tk.Button(root, text="Check Estate", command=lambda: check_existing_rainfall(combobox_estate.get(), current_time_date), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
-    submit_estate_check_button.grid(row=2, column=0, padx=10, pady=10)
+    label_estate_option = tk.Label(root, text="Pilih Divisi:", font=("Arial", 12))
+    label_estate_option.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+
+    DIVISION_OPTIONS = ["1", "2", "3", "4", "5"]
+    combobox_division = ttk.Combobox(root, values=DIVISION_OPTIONS, width=30, font=("Arial", 10))
+    combobox_division.grid(row=3, column=0, padx=10, pady=10)
+
+    submit_estate_check_button = tk.Button(root, text="Check Estate", command=lambda: check_existing_rainfall(combobox_estate.get(), combobox_division.get(), current_time_date), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
+    submit_estate_check_button.grid(row=4, column=0, padx=10, pady=10)
 
     back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
-    back_button.grid(row=3, column=0, padx=10, pady=10)
+    back_button.grid(row=5, column=0, padx=10, pady=10)
 
     main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=MAIN_MENU_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # Set color
-    main_menu_button.grid(row=4, column=0, padx=10, pady=10)
+    main_menu_button.grid(row=6, column=0, padx=10, pady=10)
 
     root.columnconfigure(0, weight=1)
 
 
 # %%
-def show_rainfall_data_entry(selected_estate):
+def show_rainfall_data_entry(selected_estate, selected_division):
     """Displays the rainfall data entry fields, pre-populated with the last entry."""
     global previous_menu, entry_update_rainfall, label_update_rainfall, back_button, main_menu_button, submit_update_rainfall_button, df
 
@@ -1557,20 +1613,20 @@ def show_rainfall_data_entry(selected_estate):
 
     previous_menu = "estate"
 
-    estate_data = df[df['Estate'] == selected_estate]
+    estate_data = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division)]
 
     if not estate_data.empty: 
         last_date = estate_data['Date'].iloc[-1] 
         last_rainfall = estate_data['Daily Rainfall (mm)'].iloc[-1]
 
-        label_update_rainfall = tk.Label(root, text=f"Update Data Hujan Untuk {selected_estate} Pada Tanggal {format_datetime(last_date)} (mm):", font=("Arial", 12))
+        label_update_rainfall = tk.Label(root, text=f"Update Data Hujan Untuk {selected_estate}-{selected_division} Pada Tanggal {format_datetime(last_date)} (mm):", font=("Arial", 12))
         label_update_rainfall.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
         entry_update_rainfall = tk.Entry(root, font=("Arial", 10))
         entry_update_rainfall.insert(0, str(last_rainfall))  
         entry_update_rainfall.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
 
-        submit_update_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_update_rainfall(selected_estate, last_date, entry_update_rainfall.get()), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
+        submit_update_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_update_rainfall(selected_estate, selected_division, last_date, entry_update_rainfall.get()), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
         submit_update_rainfall_button.grid(row=4, column=0, padx=10, pady=10)
 
         back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
@@ -1595,7 +1651,7 @@ def show_rainfall_data_entry(selected_estate):
 
 
 # %%
-def show_add_rainfall_entry(selected_estate, date):
+def show_add_rainfall_entry(selected_estate, selected_division, date):
     """Displays the screen to add new rainfall data."""
     global entry_daily_rainfall, label_daily_rainfall, submit_add_rainfall_button, previous_menu # Added previous_menu
 
@@ -1627,7 +1683,7 @@ def show_add_rainfall_entry(selected_estate, date):
     entry_daily_rainfall.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
 
     # Pass the correct 'date' (which is datetime.date) to the submit function
-    submit_add_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_estate_for_add_rainfall(selected_estate, date, entry_daily_rainfall.get()), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
+    submit_add_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_estate_for_add_rainfall(selected_estate, selected_division, date, entry_daily_rainfall.get()), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
     submit_add_rainfall_button.grid(row=2, column=0, padx=10, pady=10)
 
     back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
@@ -1642,14 +1698,8 @@ def show_add_rainfall_entry(selected_estate, date):
 #  ## 10. GUI - Navigation & Action Functions
 
 # %%
-# (Keep functions: goto_update_rainfall, goto_add_rainfall, submit_estate,
-#  submit_estate_for_analysis, submit_analysis, go_to_reanalyze, back_to_main,
-#  go_back, check_existing_rainfall, submit_estate_for_add_rainfall,
-#  submit_update_rainfall, show_success_window, close_success_and_go_back,
-#  submit_missing_dates)
-
 # Make corrections to submit_analysis date handling:
-def submit_analysis(selected_estate, blok, peilscale,
+def submit_analysis(selected_estate, selected_division, blok, peilscale,
                     jenis_pupuk_terakhir, tanggal_pupuk_terakhir_str, # Renamed for clarity
                     rencana_jenis_pupuk, tanggal_rencana_pupuk_str): # Renamed for clarity
     global df, current_time_date, username_var # Added username_var
@@ -1660,6 +1710,8 @@ def submit_analysis(selected_estate, blok, peilscale,
     # (Keep all the initial checks for empty strings, valid estate etc.)
     if not selected_estate: messagebox.showerror("Error", "Tolong masukkan nama estate."); return
     if selected_estate not in ESTATE_OPTIONS: messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'."); return
+    if not selected_division: messagebox.showerror("Error", "Tolong masukkan nomor divisi."); return
+    if selected_division not in DIVISION_OPTIONS: messagebox.showerror("Error", f"Nomor divisi invalid: '{selected_division}'."); return
     if not blok: messagebox.showerror("Error", "Tolong masukkan nama blok."); return
     if not tanggal_rencana_pupuk_str: messagebox.showerror("Error", "Tolong masukkan tanggal rencana pupuk."); return
     if not peilscale: messagebox.showerror("Error", "Masukkan nilai peilscale."); return
@@ -1695,7 +1747,7 @@ def submit_analysis(selected_estate, blok, peilscale,
         return
     
     # --- Duplicate Data Check ---
-    estate_df = df[df['Estate'] == selected_estate]
+    estate_df = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division)]
     duplicate_rows = estate_df[estate_df.duplicated(subset=['Date'], keep=False)]
 
     if not duplicate_rows.empty:
@@ -1733,7 +1785,7 @@ def submit_analysis(selected_estate, blok, peilscale,
         return
 
     # --- Rainfall Data Validation ---
-    if not validate_rainfall_data_exists(selected_estate):
+    if not validate_rainfall_data_exists(selected_estate, selected_division):
         return # Exit if rainfall validation fails
     
     # Create ID Analisa
@@ -1743,14 +1795,14 @@ def submit_analysis(selected_estate, blok, peilscale,
 
     # --- Proceed with analysis ---
     current_daily_rainfall, status, reason, recommendation = analyze_fertilizer(
-        datetime.datetime.now(CURRENT_TIMEZONE), username, selected_estate, blok, id_analisa, df,
+        datetime.datetime.now(CURRENT_TIMEZONE), username, selected_estate, selected_division, blok, id_analisa, df,
         peilscale_int, jenis_pupuk_terakhir, tanggal_pupuk_terakhir_dt, # Pass datetime object
         rencana_jenis_pupuk, tanggal_rencana_pupuk_dt # Pass datetime object
     )
 
     # Display the results - Pass strings for display as they were entered/selected
     display_analysis_results(
-        selected_estate, blok, tanggal_rencana_pupuk_str, peilscale, # Pass original peilscale string
+        selected_estate, selected_division, blok, tanggal_rencana_pupuk_str, peilscale, # Pass original peilscale string
         tanggal_pupuk_terakhir_str, jenis_pupuk_terakhir, rencana_jenis_pupuk,
         username, current_daily_rainfall, status, id_analisa, reason, recommendation
     )
@@ -1758,7 +1810,7 @@ def submit_analysis(selected_estate, blok, peilscale,
 
 
 # %%
-def submit_missing_dates(selected_estate, missing_dates_list):
+def submit_missing_dates(selected_estate, selected_division, missing_dates_list):
     """Processes the input for missing rainfall dates."""
     global df, missing_dates_widgets # Remove current_time_date from global if not needed elsewhere in this func
 
@@ -1807,7 +1859,7 @@ def submit_missing_dates(selected_estate, missing_dates_list):
         for date_obj in sorted_dates:
             rainfall_val = rainfall_inputs[date_obj]
             print(f"Processing missing date: {format_datetime(date_obj)}, Rainfall: {rainfall_val}") # Debug print
-            df = calculate_rainfall(df, date_obj, rainfall_val, selected_estate)
+            df = calculate_rainfall(df, date_obj, rainfall_val, selected_estate, selected_division)
             root.update_idletasks() # Update UI briefly
 
 
@@ -1822,12 +1874,12 @@ def submit_missing_dates(selected_estate, missing_dates_list):
              df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df.dropna(subset=['Date'], inplace=True) # Drop rows where conversion failed
 
-        estate_data_today = df[(df['Estate'] == selected_estate) & (df['Date'].dt.date == today_date_obj)]
+        estate_data_today = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division) & (df['Date'].dt.date == today_date_obj)]
 
         if estate_data_today.empty:
             print("Proceeding to input today's rainfall...")
             # Pass today_date_obj (which is datetime.date)
-            show_add_rainfall_entry(selected_estate, today_date_obj)
+            show_add_rainfall_entry(selected_estate, selected_division, today_date_obj)
         else:
             print("Today's rainfall already exists after filling gaps.")
             messagebox.showinfo("Info", f"Data hujan untuk hari ini ({format_datetime(today_date_obj)}) sudah ada.")
@@ -1886,7 +1938,7 @@ def show_success_window():
 
 
 # %%
-def submit_update_rainfall(selected_estate, date, new_rainfall):
+def submit_update_rainfall(selected_estate, selected_division, date, new_rainfall):
     """Submits the updated rainfall data to the spreadsheet."""
     global previous_menu, df, entry_update_rainfall
     if not root_exists:
@@ -1901,16 +1953,16 @@ def submit_update_rainfall(selected_estate, date, new_rainfall):
         return
     
     # Remove the old data
-    df = remove_old_data(df, date, selected_estate)
+    df = remove_old_data(df, date, selected_estate, selected_division)
 
     # Recalculate dependent columns using calculate_rainfall
-    df = calculate_rainfall(df, date, new_rainfall, selected_estate)
+    df = calculate_rainfall(df, date, new_rainfall, selected_estate, selected_division)
 
     show_success_window()
 
 
 # %%
-def submit_estate_for_add_rainfall(selected_estate, date, new_rainfall):
+def submit_estate_for_add_rainfall(selected_estate, selected_division, date, new_rainfall):
     global previous_menu, df
 
     if not root_exists:
@@ -1921,6 +1973,11 @@ def submit_estate_for_add_rainfall(selected_estate, date, new_rainfall):
         tk.messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(ESTATE_OPTIONS)}")
         return
     
+    DIVISION_OPTIONS = ["1", "2", "3", "4", "5"]
+    if selected_division not in DIVISION_OPTIONS:
+        tk.messagebox.showerror("Error", f"Nomor divisi invalid: '{selected_division}'. Tolong pilih antara: {', '.join(ESTATE_OPTIONS)}")
+        return
+    
     try:
         new_rainfall = float(new_rainfall)
         if new_rainfall < 0:
@@ -1929,13 +1986,13 @@ def submit_estate_for_add_rainfall(selected_estate, date, new_rainfall):
         tk.messagebox.showerror("Error", "Nilai curah hujan invalid. Tolong masukkan bilangan positif.")
         return
     
-    df = calculate_rainfall(df, date, new_rainfall, selected_estate)
+    df = calculate_rainfall(df, date, new_rainfall, selected_estate, selected_division)
     
     show_success_window()
 
 
 # %%
-def check_existing_rainfall(selected_estate, current_time_date):
+def check_existing_rainfall(selected_estate, selected_division, current_time_date):
     global df, previous_menu
 
     if not root_exists:
@@ -1949,20 +2006,28 @@ def check_existing_rainfall(selected_estate, current_time_date):
     if selected_estate not in ESTATE_OPTIONS:
         messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(ESTATE_OPTIONS)}")
         return
+    
+    DIVISION_OPTIONS = ["1", "2", "3", "4", "5"]
+    if not selected_division:
+        messagebox.showerror("Error", "Silakan pilih divisi terlebih dahulu.")
+        return
+    if selected_division not in DIVISION_OPTIONS:
+        messagebox.showerror("Error", f"Nomor divisi invalid: '{selected_division}'. Tolong pilih antara: {', '.join(DIVISION_OPTIONS)}")
+        return
 
     # --- Check for Missing Dates FIRST ---
-    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, current_time_date)
+    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, selected_division, current_time_date)
 
-    print(f"Checking estate: {selected_estate}") # Debug
+    print(f"Checking estate: {selected_estate}, divisi: {selected_division}") # Debug
     print(f"Last reported: {last_reported_time}, Missing: {total_missing_dates}") # Debug
-    # print(f"Missing dates list: {missing_dates}") # Debug (can be long)
+    print(f"Missing dates list: {missing_dates}") # Debug
 
     if total_missing_dates > 0:
         # --- Show Missing Dates Input Screen ---
         print(f"Found {total_missing_dates} missing dates. Showing input screen.") # Debug
         # It's generally better *not* to show a blocking error here, but proceed to the input screen
         # messagebox.showinfo("Info", f"Terdapat {total_missing_dates} hari data hujan yang hilang untuk estate {selected_estate} sejak {format_datetime(last_reported_time + timedelta(days=1))}.\n\nAnda akan diminta untuk mengisi data tersebut terlebih dahulu.")
-        show_missing_dates_input(selected_estate, missing_dates)
+        show_missing_dates_input(selected_estate, selected_division, missing_dates)
         # previous_menu is set inside show_missing_dates_input
 
     else:
@@ -1973,20 +2038,20 @@ def check_existing_rainfall(selected_estate, current_time_date):
         if not pd.api.types.is_datetime64_any_dtype(df['Date']):
              df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
 
-        estate_data_today = df[(df['Estate'] == selected_estate) & (df['Date'].dt.date == today_date)]
+        estate_data_today = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division) & (df['Date'].dt.date == today_date)]
 
         if estate_data_today.empty:
             # --- Today's Data Missing: Show Input Screen for Today ---
             print("Today's data not found. Showing add rainfall entry.") # Debug
             # hide_estate_widgets() # hide_all_widgets is called in show_add_rainfall_entry
-            show_add_rainfall_entry(selected_estate, today_date)
+            show_add_rainfall_entry(selected_estate, selected_division, today_date)
             previous_menu = "estate_add_rainfall" # Came from estate selection
         else:
             # --- Today's Data Exists ---
             print("Today's data already exists.") # Debug
             estate_rainfall_today = df['Daily Rainfall (mm)'].iloc[-1]
             # hide_estate_widgets() # hide_all_widgets is called later if needed
-            messagebox.showinfo("Info", f"Data hujan untuk estate {selected_estate} pada hari ini ({format_datetime(today_date)}) sudah dimasukkan sebesar {estate_rainfall_today}."
+            messagebox.showinfo("Info", f"Data hujan untuk estate {selected_estate}, divisi {selected_division} pada hari ini ({format_datetime(today_date)}) sudah dimasukkan sebesar {estate_rainfall_today}."
                                 "\nSilahkan update data melalui menu 'Masukkan Data Hujan' → 'Update Data Hujan Terakhir' ")
             # Decide where to go now - maybe back to main menu or rainfall options?
             back_to_main() # Or show_rainfall_options()
@@ -2090,7 +2155,7 @@ def submit_estate_for_analysis(selected_estate, nama_blok, peilscale, jenis_tera
 
 
 # %%
-def submit_estate(selected_estate):
+def submit_estate(selected_estate, selected_division):
     global previous_menu
     if not root_exists:
         return
@@ -2099,9 +2164,15 @@ def submit_estate(selected_estate):
     if selected_estate not in ESTATE_OPTIONS:
         tk.messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(ESTATE_OPTIONS)}")
         return
+    
+    DIVISION_OPTIONS = ["1", "2", "3", "4", "5"]
+    if selected_division not in DIVISION_OPTIONS:
+        tk.messagebox.showerror("Error", f"Nomor divisi invalid: '{selected_division}'. Tolong pilih antara: {', '.join(DIVISION_OPTIONS)}")
+        return
 
     print(f"Selected Estate: {selected_estate}")
-    show_rainfall_data_entry(selected_estate)
+    print(f"Selected Division: {selected_division}")
+    show_rainfall_data_entry(selected_estate, selected_division)
 
 
 # %%
