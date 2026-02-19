@@ -22,9 +22,9 @@ import string
 # Third-Party Libraries
 import pandas as pd
 import pytz # pip install pytz
-import gspread # pip install gspread
 from oauth2client.service_account import ServiceAccountCredentials # pip install oauth2client
 # from google.oauth2.service_account import Credentials # Alternative auth
+from supabase import create_client, Client
 
 # GUI Libraries
 import tkinter as tk # pip install tkinter
@@ -46,10 +46,21 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 # --- Authentication ---
-JSON_PATH = resource_path('enginewaktuaplikasipemupukan-03e33861bae9.json') # Make sure file exists
-SHEET_URL = "https://docs.google.com/spreadsheets/d/19GOqS3y20sZYexBgaFQOavCaktXIYZD7cpVSsH9sL9o/edit?usp=sharing" # Make sure file is shared with the service account email
-SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+url: str = "https://wuleooydwhhgpyzkcuwb.supabase.co"
+key: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1bGVvb3lkd2hoZ3B5emtjdXdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4ODA0MzUsImV4cCI6MjA4NjQ1NjQzNX0.etXxyiGd_-cWpw8aE1-3kSK4WA9Y5mjiq1cr9OUunF4"
+
+TARGET_ENVIRONMENT = "TDK"
 SPLASH_IMAGE = resource_path('splash_image.png')
+
+if getattr(sys, 'frozen', False):
+    # Running as PyInstaller executable
+    base_path = os.path.dirname(sys.executable)
+elif '__file__' in globals():
+
+    base_path = os.path.dirname(os.path.abspath(__file__))
+else:
+
+    base_path = os.getcwd()
 
 # --- Fertilizer Data ---
 FERTILIZER_GROUPS = {
@@ -99,7 +110,10 @@ HYGROSCOPIC = {
 NOT_ALLOWED_3_DAYS = ["Urea"]
 NOT_ALLOWED_7_DAYS = ["Urea", "MOP", "HGFB"]
 
-ESTATE_OPTIONS = ["Inti", "Plasma"] # Use constant for options
+if TARGET_ENVIRONMENT == "TDK":
+    ESTATE_OPTIONS = ["Inti", "Plasma"]
+else:
+    ESTATE_OPTIONS = ["Inti", "Plasma", "Pematang Danau"]
 DIVISION_OPTIONS = ["1", "2", "3", "4", "5"]
 
 INTERVAL_TABLE = {
@@ -130,9 +144,17 @@ ANALISA_ID_TEXT_COLOR = "#0e7767"
 # --- Timezone ---
 CURRENT_TIMEZONE = pytz.timezone('Asia/Jakarta') # Or your preferred timezone
 
-
 # %% [markdown]
 #  ## 3. Utility Functions
+
+# %%
+def init_supabase():
+    try:
+        print(f"Initializing Supabase client...")
+        return create_client(url, key)
+    except Exception as e:
+        print(f"[ERROR] Supabase initialization failed: {str(e)}")
+        return None
 
 # %%
 def format_datetime(dt):
@@ -140,7 +162,7 @@ def format_datetime(dt):
     if isinstance(dt, (datetime.datetime, datetime.date)):
          # ADD CHECK: Ensure dt is not None before calling strftime
          if dt:
-             return dt.strftime('%d/%m/%Y')
+             return dt.strftime('%Y%m/%d')
     return '' # Return empty string if not a valid date/datetime or if None
 
 def format_datetimehour(dt):
@@ -178,82 +200,23 @@ def get_fertilizer_group(fertilizer):
 
 
 # %%
-def get_missing_dates(df, estate_name,  division_number, current_time_date): # current_time_date is tz-aware datetime.datetime
-    """Calculates the missing dates for a given estate."""
-    global CURRENT_TIMEZONE
-
-    print(f"Debug: Starting get_missing_dates for {estate_name} & {division_number} as of {current_time_date}")
-    print(f"Debug: estate data head:\n{df.head()}")
-
-    # Filter and sort data
-    estate_data = df[(df['Estate'] == estate_name) & (df['Division'] == division_number)].sort_values(by='Date')
-
-    print(f"Debug: estate data after filtering:\n{estate_data.head()}")
-
-    if estate_data.empty:
-        print(f"No previous data found for {estate_name} & {division_number}. Cannot determine missing dates.")
+def get_missing_dates(df, current_time_date):
+    
+    if df.empty:
         return pd.DatetimeIndex([]), None, 0
 
-    # --- Ensure 'Date' column is datetime ---
-    # ... (Keep the robust datetime conversion block from the previous step) ...
-    if not pd.api.types.is_datetime64_any_dtype(estate_data['Date']):
-        try:
-            estate_data = estate_data.assign(Date=pd.to_datetime(estate_data['Date'], errors='coerce'))
-            estate_data = estate_data.dropna(subset=['Date'])
-        except Exception as e:
-            print(f"Error converting 'Date' column to datetime for {estate_name} & {division_number}: {e}")
-            return pd.DatetimeIndex([]), None, 0
-        if estate_data.empty:
-            print(f"No valid dates found for {estate_name} & {division_number} after conversion.")
-            return pd.DatetimeIndex([]), None, 0
-    # --- End datetime check ---
+    print(f"df['Date'].max(): {df['Date'].max()}, type: {type(df['Date'].max())}")
+    start_date = df['Date'].max() + pd.Timedelta(days=1)
 
-    last_reported_timestamp_naive = estate_data['Date'].iloc[-1]
+    print(f"current_time_date: {current_time_date}, type: {type(current_time_date)}")
+    end_date = current_time_date - pd.Timedelta(days=1)
 
-    # --- Make last_reported_timestamp timezone-aware ---
-    try:
-        if last_reported_timestamp_naive.tzinfo is None:
-            last_reported_time_aware = last_reported_timestamp_naive.tz_localize(CURRENT_TIMEZONE)
-        elif last_reported_timestamp_naive.tzinfo == CURRENT_TIMEZONE:
-            last_reported_time_aware = last_reported_timestamp_naive
-        else:
-            last_reported_time_aware = last_reported_timestamp_naive.tz_convert(CURRENT_TIMEZONE)
-            print(f"Warning: Converted last reported time from {last_reported_timestamp_naive.tzinfo} to {CURRENT_TIMEZONE}")
-    except Exception as e:
-        print(f"Error handling timezone for last reported date ({last_reported_timestamp_naive}): {e}")
-        return pd.DatetimeIndex([]), None, 0
-    # --- End timezone handling ---
-
-
-    # Prepare start and end dates for the range
-    # last_reported_time_aware should be a pandas Timestamp, so .normalize() is OK
-    start_date = last_reported_time_aware.normalize() + pd.Timedelta(days=1) # Keep pd.Timedelta from pandas
-
-    # --- FIX HERE ---
-    # current_time_date is standard datetime, use .replace() to set time to midnight
-    midnight_today = current_time_date.replace(hour=0, minute=0, second=0, microsecond=0) # current_time_date is already datetime.datetime
-    end_date = midnight_today - pd.Timedelta(days=1) # Keep pd.Timedelta from pandas
-    # --- END FIX ---
-
-    print(f"Debug: Calculated start_date: {start_date}")
-    print(f"Debug: Calculated end_date: {end_date}")
-
-    # Check if start_date is actually after end_date
     if start_date > end_date:
-         print(f"No missing dates found (Start {start_date.date()} > End {end_date.date()}).")
-         return pd.DatetimeIndex([]), last_reported_time_aware, 0
+        return pd.DatetimeIndex([]), start_date, 0
 
-    # Generate the date range
-    try:
-        missing_dates = pd.date_range(start=start_date, end=end_date, freq='D')
-    except Exception as e:
-        print(f"Error calling pd.date_range with start={start_date}, end={end_date}: {e}")
-        return pd.DatetimeIndex([]), last_reported_time_aware, 0
+    missing_dates = pd.date_range(start=start_date, end=end_date, freq='D')
 
-    total_missing_dates = len(missing_dates)
-    print(f"Debug: Found {total_missing_dates} missing dates.")
-
-    return missing_dates, last_reported_time_aware, total_missing_dates
+    return missing_dates, start_date, len(missing_dates)
 
 # %% [markdown]
 #  ## 4. Global Variables (Application State)
@@ -265,7 +228,7 @@ previous_menu = None
 root_exists = False
 current_menu = None
 df = pd.DataFrame() # In-memory data store
-current_time_date = datetime.datetime.now(CURRENT_TIMEZONE) # Ensure it uses datetime.datetime
+current_time_date = datetime.datetime.now(CURRENT_TIMEZONE).date() # Ensure it uses datetime.datetime
 formatted_today = format_datetime(current_time_date)
 yesterday_time_date = current_time_date - datetime.timedelta(days=1)
 
@@ -273,99 +236,325 @@ yesterday_time_date = current_time_date - datetime.timedelta(days=1)
 username_var = None # Will be StringVar, created in main_process
 username = ""     # Will store the string username
 
-# --- Google Sheets Objects ---
-sheet_data = None   # DB sheet object
-sheet_output = None # Output sheet object
+# --- Database Objects ---
+supadatabase = None
+rain_data = None   # DB data object
+output_data = None # Output data object
 
 # --- GUI State ---
 success_window = None
 missing_dates_widgets = {}
 
-# --- Widget References (Initialized to None in main_process) ---
-# These are numerous, keeping them listed in main_process might be okay for now,
-# but consider a class structure for larger apps.
-# (List of widget variables like label_username, entry_username, etc.)
-
-
 # %% [markdown]
 #  ## 5. Google Sheets Interaction
 
 # %%
-def load_database(sheet_url, json_path):
-    """Loads data from the Google Sheet 'DB' worksheet into a Pandas DataFrame."""
-    global sheet_data, sheet_output # Keep sheet objects global for calculation/output functions
+def load_initial_database():
+    global rain_data, output_data, supadatabase
+
+    print(f"[DEBUG] load_initial_database")
+
+    if (supadatabase == None):
+        supadatabase = init_supabase()
+        
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name(json_path, SCOPE)
-        client = gspread.authorize(creds)
-        sheet_data = client.open_by_url(sheet_url).worksheet("DB")
-        sheet_output = client.open_by_url(sheet_url).worksheet("Output") # Get output sheet handle too
-        data = sheet_data.get_all_records()
-        df_loaded = pd.DataFrame(data)
+        if (TARGET_ENVIRONMENT == "TDK") :
+            res_data = supadatabase.table("rainfall_station_tdk").select("*").order("date", desc=True).execute()
+            res_output = supadatabase.table("hasil_analisa_pupuk_tdk").select("*").execute()
+
+            print(f"Connection to TDK DB Success!")
+        elif (TARGET_ENVIRONMENT == "SSM"):
+            res_data = supadatabase.table("rainfall_station_ssm").select("*").order("date", desc=True).execute()
+            res_output = supadatabase.table("hasil_analisa_pupuk_ssm").select("*").execute()
+
+            print(f"Connection to SSM DB Success!")
+    
+        rain_data = pd.DataFrame(res_data.data)
+        output_data = pd.DataFrame(res_output.data)
+
+        # print(f"[DEBUG] res_output.data:\n{res_output.data}")
+        # print(f"[DEBUG] output_data head:\n{output_data.head(1)}")
+        # print(f"[DEBUG] rain_data head:\n{rain_data.head(1)}")
+        # print(f"[DEBUG] rain_data info:\n{rain_data.info()}")
 
         # Data type conversions and cleaning
-        if 'Date' in df_loaded.columns:
-            df_loaded['Date'] = pd.to_datetime(df_loaded['Date'], format='%d/%m/%Y', errors='coerce')
-            df_loaded.dropna(subset=['Date'], inplace=True)
+        print(f"[DEBUG] Starting datetime conversions and cleaning")
+        if 'date' in rain_data.columns:
+            rain_data['date'] = pd.to_datetime(rain_data['date'], format='%Y-%m-%d', errors='coerce')
+            rain_data.dropna(subset=['date'], inplace=True)
         else:
-             messagebox.showerror("Data Error", "Kolom 'Date' tidak ditemukan di spreadsheet.")
+             print("Data Error Kolom 'date' tidak ditemukan di database.")
+             messagebox.showerror("Data Error", "Kolom 'date' tidak ditemukan di database.")
              return pd.DataFrame()
-
-        if 'Daily Rainfall (mm)' in df_loaded.columns:
-            df_loaded['Daily Rainfall (mm)'] = pd.to_numeric(df_loaded['Daily Rainfall (mm)'], errors='coerce')
-            # Optionally handle NaNs in rainfall here (e.g., fillna(0) or dropna())
-            # df_loaded['Daily Rainfall (mm)'].fillna(0, inplace=True)
-        else:
-            messagebox.showerror("Data Error", "Kolom 'Daily Rainfall (mm)' tidak ditemukan di spreadsheet.")
-            return pd.DataFrame()
-
-        if 'Estate' in df_loaded.columns:
-            df_loaded['Estate'] = df_loaded['Estate'].fillna('').astype(str)
-        else:
-            messagebox.showerror("Data Error", "Kolom 'Estate' tidak ditemukan di spreadsheet.")
-            return pd.DataFrame()
-
-        if 'Division' in df_loaded.columns:
-            df_loaded['Division'] = df_loaded['Division'].fillna('').astype(str)
-        else:
-            messagebox.showerror("Data Error", "Kolom 'Division' tidak ditemukan di spreadsheet.")
-            return pd.DataFrame()
         
-        print(f"{df_loaded['Estate'].dtype}, {df_loaded['Division'].dtype}")
+        print(f"[DEBUG] Starting estate conversions and cleaning")
+        if 'estate' in rain_data.columns:
+            rain_data['estate'] = rain_data['estate'].fillna('').astype(str)
+        else:
+            print("Data Error Kolom 'estate' tidak ditemukan di database.")
+            messagebox.showerror("Data Error", "Kolom 'estate' tidak ditemukan di database.")
+            return pd.DataFrame()
 
-        # Ensure all calculation columns exist, add them with default NaN or 0 if not
-        calc_columns = ['Accumulation Rainfall -29 days', 'Evapotranspiration',
-                        'Water Balance', 'Soil Water Reserve (mm)', 'Water Surplus']
-        for col in calc_columns:
-            if col not in df_loaded.columns:
-                df_loaded[col] = pd.NA # Or 0 if preferred
+        print(f"[DEBUG] Starting division conversions and cleaning")
+        if 'division' in rain_data.columns:
+            rain_data['division'] = rain_data['division'].fillna('').astype(str)
+        else:
+            print("Data Error Kolom 'division' tidak ditemukan di database.")
+            messagebox.showerror("Data Error", "Kolom 'division' tidak ditemukan di database.")
+            return pd.DataFrame()
 
-        # Convert calculation columns to numeric, coercing errors
-        for col in calc_columns:
-             df_loaded[col] = pd.to_numeric(df_loaded[col], errors='coerce')
+        rain_data = rain_data.rename(columns={
+            'date': 'Date',
+            'estate': 'Estate',
+            'division': 'Division',
+            'daily_rainfall_mm': 'Daily Rainfall (mm)',
+            'accumulation_rainfall_29_days': 'Accumulation Rainfall -29 days',
+            'evapotranspiration': 'Evapotranspiration',
+            'water_balance': 'Water Balance',
+            'soil_water_reserve_mm': 'Soil Water Reserve (mm)',
+            'water_surplus': 'Water Surplus',
+            'id': 'id'
+        })
+        
+        print(f"[DEBUG] Column names after standardization:\n{rain_data.columns.tolist()}")
 
+        print(f"[DEBUG] rain_data.head(): {rain_data.head()}")
 
-        return df_loaded.sort_values(by='Date').reset_index(drop=True) # Ensure data is sorted
+        return rain_data
 
-    except gspread.exceptions.SpreadsheetNotFound:
-        messagebox.showerror("Connection Error", f"Spreadsheet tidak ditemukan: {sheet_url}")
-        return pd.DataFrame()
-    except gspread.exceptions.APIError as e:
-        messagebox.showerror("Connection Error", f"Kesalahan API Google Sheets: {e}")
-        return pd.DataFrame()
     except Exception as e:
-        messagebox.showerror("Error", f"Kesalahan saat memuat data: {e}")
-        print(f"An unexpected error occurred loading data: {e}")
-        traceback.print_exc() # Print full traceback for debugging
+        print(f"[ERROR] Failed to load database: {str(e)}")
+        messagebox.showerror("Database Error", f"Gagal memuat database:\n{str(e)}")
         return pd.DataFrame()
 
-def append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation):
-    """Appends analysis results to the 'Output' Google Sheet."""
-    global sheet_output
+# %%
+def load_estate_database(selected_estate, selected_division):
+    global rain_data, output_data, supadatabase
 
-    if sheet_output is None:
-        messagebox.showerror("Error", "Koneksi ke sheet belum siap.")
-        return "Error"
+    print(f"[DEBUG] load_estate_database")
 
+    if (supadatabase == None):
+        supadatabase = init_supabase()
+        
+    try:
+        # Convert division to integer for proper database filtering
+        division_int = int(selected_division)
+        
+        if (TARGET_ENVIRONMENT == "TDK") :
+            res_data = supadatabase.table("rainfall_station_tdk").select("*").eq("estate", selected_estate).eq("division", division_int).order("date", desc=True).execute()
+            res_output = supadatabase.table("hasil_analisa_pupuk_tdk").select("*").execute()
+
+            # messagebox.showinfo("DEBUG", "Connection to TDK DB Success!")
+            print(f"Connection to TDK DB Success!")
+        elif (TARGET_ENVIRONMENT == "SSM"):
+            res_data = supadatabase.table("rainfall_station_ssm").select("*").eq("estate", selected_estate).eq("division", division_int).order("date", desc=True).execute()
+            res_output = supadatabase.table("hasil_analisa_pupuk_ssm").select("*").execute()
+
+            print(f"Connection to SSM DB Success!")
+    
+        rain_data = pd.DataFrame(res_data.data)
+        output_data = pd.DataFrame(res_output.data)
+
+        # print(f"[DEBUG] res_output.data:\n{res_output.data}")
+        # print(f"[DEBUG] output_data head:\n{output_data.head(1)}")
+        # print(f"[DEBUG] rain_data head:\n{rain_data.head(1)}")    
+        # print(f"[DEBUG] rain_data info:\n{rain_data.info()}")
+
+        # Data type conversions and cleaning
+        if 'date' in rain_data.columns:
+            rain_data['date'] = pd.to_datetime(rain_data['date'], format='%Y-%m-%d', errors='coerce').dt.date
+            rain_data.dropna(subset=['date'], inplace=True)
+        else:
+             print("Data Error Kolom 'date' tidak ditemukan di database.")
+             messagebox.showerror("Data Error", "Kolom 'date' tidak ditemukan di database.")
+             return pd.DataFrame()
+        
+        if 'estate' in rain_data.columns:
+            rain_data['estate'] = rain_data['estate'].fillna('').astype(str)
+        else:
+            print("Data Error Kolom 'estate' tidak ditemukan di database.")
+            messagebox.showerror("Data Error", "Kolom 'estate' tidak ditemukan di database.")
+            return pd.DataFrame()
+
+        if 'division' in rain_data.columns:
+            rain_data['division'] = rain_data['division'].fillna('').astype(str)
+        else:
+            print("Data Error Kolom 'division' tidak ditemukan di database.")
+            messagebox.showerror("Data Error", "Kolom 'division' tidak ditemukan di database.")
+            return pd.DataFrame()
+
+        rain_data = rain_data.rename(columns={
+            'date': 'Date',
+            'estate': 'Estate',
+            'division': 'Division',
+            'daily_rainfall_mm': 'Daily Rainfall (mm)',
+            'accumulation_rainfall_29_days': 'Accumulation Rainfall -29 days',
+            'evapotranspiration': 'Evapotranspiration',
+            'water_balance': 'Water Balance',
+            'soil_water_reserve_mm': 'Soil Water Reserve (mm)',
+            'water_surplus': 'Water Surplus',
+            'id': 'id'
+        })
+
+        # print(f"[DEBUG] Column names after standardization:\n{rain_data.columns.tolist()}")
+
+        # print(f"[DEBUG] rain_data.head(): {rain_data.head()}")
+
+        # messagebox.showinfo("DEBUG", f"Data untuk Estate: {selected_estate}, Divisi: {selected_division} berhasil dimuat!")
+        # messagebox.showinfo("DEBUG", f"rain_data: {rain_data}")
+
+        return rain_data
+
+    except Exception as e:
+        print(f"Connection to {TARGET_ENVIRONMENT} DB failed! Reason:", e)
+        messagebox.showerror("Startup Error", f"Connection to {TARGET_ENVIRONMENT} DB failed!\nReason: {e}")
+        return pd.DataFrame()
+
+# %%
+def insert_rain_data(new_row_values):
+    global rain_data, output_data, supadatabase
+
+    print(f"[DEBUG] insert_rain_data")
+
+    if (supadatabase is None):
+        supadatabase = init_supabase()
+
+    if supadatabase is None:
+        print("[ERROR] Supabase database connection failed. Cannot insert data.")
+        messagebox.showerror("Error", "Koneksi database gagal. Data tidak dapat dikirim.")
+        return
+        
+    try:
+        if (TARGET_ENVIRONMENT == "TDK") :
+            input_tabel = "rainfall_station_tdk"
+            
+        elif (TARGET_ENVIRONMENT == "SSM"):
+            input_tabel = "rainfall_station_ssm"
+
+        supadatabase.table(input_tabel).insert(
+            {"date": new_row_values[0], 
+                "estate": new_row_values[1],
+                "division": new_row_values[2],
+                "daily_rainfall_mm": new_row_values[3],
+                "accumulation_rainfall_29_days": new_row_values[4],
+                "evapotranspiration": new_row_values[5],
+                "water_balance": new_row_values[6],
+                "soil_water_reserve_mm": new_row_values[7],
+                "water_surplus": new_row_values[8],
+                }).execute()
+
+        print(f"Insert rain data to {TARGET_ENVIRONMENT} DB Success!")
+    
+    except Exception as e:
+        print(f"Insert rain data to {TARGET_ENVIRONMENT} DB failed! Reason:", e)
+
+# %%
+def update_rain_data(new_row_values):
+    global rain_data, output_data, supadatabase
+
+    print(f"[DEBUG] update_rain_data")
+
+    if (supadatabase is None):
+        supadatabase = init_supabase()
+
+    if supadatabase is None:
+        print("[ERROR] Supabase database connection failed. Cannot update data.")
+        messagebox.showerror("Error", "Koneksi database gagal. Data tidak dapat diupdate.")
+        return
+        
+    try:
+        if (TARGET_ENVIRONMENT == "TDK") :
+            input_tabel = "rainfall_station_tdk"
+            
+        elif (TARGET_ENVIRONMENT == "SSM"):
+            input_tabel = "rainfall_station_ssm"
+
+        supadatabase.table(input_tabel).update(
+            {"date": new_row_values[0], 
+                "estate": new_row_values[1],
+                "division": new_row_values[2],
+                "daily_rainfall_mm": new_row_values[3],
+                "accumulation_rainfall_29_days": new_row_values[4],
+                "evapotranspiration": new_row_values[5],
+                "water_balance": new_row_values[6],
+                "soil_water_reserve_mm": new_row_values[7],
+                "water_surplus": new_row_values[8],
+                }).eq("date", new_row_values[0]).eq("estate", new_row_values[1]).eq("division", new_row_values[2]).execute()
+
+        print(f"Update rain data to {TARGET_ENVIRONMENT} DB Success!")
+    
+    except Exception as e:
+        print(f"Update rain data to {TARGET_ENVIRONMENT} DB failed! Reason:", e)
+
+# %%
+def insert_output_data(output_data):
+    global supadatabase
+
+    print(f"[DEBUG] insert_output_data")
+
+    if (supadatabase is None):
+        supadatabase = init_supabase()
+        
+    try:
+        if (TARGET_ENVIRONMENT == "TDK") :
+            hasil_analisa_tabel = "hasil_analisa_pupuk_tdk"
+
+        elif (TARGET_ENVIRONMENT == "SSM"):
+            hasil_analisa_tabel = "hasil_analisa_pupuk_ssm"
+
+        supadatabase.table(hasil_analisa_tabel).insert(
+            {"tanggal_analisa": output_data[0], 
+                "nama_user": output_data[1],
+                "estate": output_data[2],
+                "division": output_data[3],
+                "blok": output_data[4],
+                "id_analisa": output_data[5],
+                "curah_hujan": output_data[6],
+                "peilscale": output_data[7],
+                "pupuk_terakhir": output_data[8],
+                "tanggal_aplikasi_terakhir": output_data[9],
+                "plan_pupuk": output_data[10],
+                "plan_aplikasi": output_data[11],
+                "status": output_data[12],
+                "reason": output_data[13],
+                "recommendation": output_data[14],
+                }).execute()
+
+        print(f"Insert output data to {TARGET_ENVIRONMENT} DB Success!")
+    
+    except Exception as e:
+        print(f"Insert output data to {TARGET_ENVIRONMENT} DB failed! Reason:", e)
+
+# %%
+def delete_rain_data(input_date, estate, division):
+    global supadatabase
+
+    print(f"[DEBUG] delete_rain_data")
+    print(f"[DEBUG] input_date: {input_date}, estate: {estate}, division: {division}")
+
+    if (supadatabase == None):
+        supadatabase = init_supabase()
+        
+    try:
+        if (TARGET_ENVIRONMENT == "TDK") :
+            delete_tabel = "rainfall_station_ssm"
+            
+        elif (TARGET_ENVIRONMENT == "SSM"):
+            delete_tabel = "rainfall_station_ssm"
+
+        supadatabase.table(delete_tabel).delete()\
+            .eq("date", input_date)\
+            .eq("estate", estate)\
+            .eq("division", division)\
+            .execute()
+
+        print(f"Delete rain data for {input_date}, {estate}-{division} DB Success!")
+    
+    except Exception as e:
+        print(f"Delete rain data for {input_date}, {estate}-{division} DB Failed! Reason:", e)
+
+# %%
+def calculate_and_append_db(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation):
     status = "Allowed" if not reason else "Not Allowed"
 
     try:
@@ -379,68 +568,37 @@ def append_to_spreadsheet(date_input, username, estate_name, division_number, bl
             next_fert_date_str = next_fertilizer_date.strftime("%Y-%m-%d")
         # --- End date formatting ---
 
-        output_data = [
+        output_result = [
             date_input.strftime('%Y-%m-%d %H:%M:%S'), username, estate_name, division_number,
             blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer,
-            last_fert_date_str, # Use formatted string
+            last_fert_date_str,
             next_fertilizer,
-            next_fert_date_str, # Use formatted string
+            next_fert_date_str,
             status, reason, recommendation
         ]
-        sheet_output.append_row(output_data)
-        print("Analysis results appended to spreadsheet.")
+        insert_output_data(output_result)
+        
+        print("Analysis results appended to database.")
         return status
     except Exception as e:
-         messagebox.showerror("Error", f"Gagal menyimpan hasil ke spreadsheet: {e}")
-         print(f"Error appending to spreadsheet: {e}")
-         return "Error"
+         messagebox.showerror("Error", f"Gagal menyimpan hasil ke database: {e}")
+         back_to_main()
 
-# NOTE: The remove_old_data function interacts directly with the sheet by row number.
-# This can be brittle if the sheet structure changes or rows are manually deleted/inserted.
-# Consider using gspread's batch_update or finding rows by criteria before deleting if needed.
+# %%
 def remove_old_data(df, date_to_remove, estate_name, division_number):
-    """Removes data for a specific date and estate from DataFrame and Spreadsheet."""
-    global sheet_data
-    if sheet_data is None: return df # Cannot modify sheet if not connected
+
+    # --- Load Initial Data ---
+    if (df is None) or (df.empty):
+        print("Loading data...") # Feedback
+        df = load_estate_database(estate_name, division_number)
+        if df.empty:
+            messagebox.showerror("Startup Error", "Gagal memuat data.\nAplikasi akan ditutup.")
+            if root: root.destroy()
+            return
+        print("Data loaded successfully.") # Feedback
 
     try:
-        date_to_remove_dt = pd.to_datetime(date_to_remove).normalize() # Ensure consistent datetime for comparison
-        date_str_format = date_to_remove_dt.strftime('%d/%m/%Y') # Format for finding in sheet
-
-        # Remove from DataFrame
-        original_len = len(df)
-        indices_to_drop = df[(df['Estate'] == estate_name) & (df['Division'] == division_number) & (df['Date'] == date_to_remove_dt)].index
-        if not indices_to_drop.empty:
-            df.drop(indices_to_drop, inplace=True)
-            print(f"Removed {len(indices_to_drop)} row(s) from DataFrame for {estate_name}-{division_number} on {date_str_format}")
-        else:
-             print(f"No matching row found in DataFrame for {estate_name}-{division_number} on {date_str_format}")
-
-        # Remove from spreadsheet (find all matching rows and delete)
-        # Use findall to get all matching cells for the date in the first column
-        cells = sheet_data.findall(date_str_format, in_column=1)
-        rows_to_delete_sheet = []
-        if cells:
-            for cell in cells:
-                row_data = sheet_data.row_values(cell.row)
-                # Check if the estate in that row also matches
-                if len(row_data) > 1 and row_data[1] == estate_name and row_data[2] == division_number: # Assuming Estate is in column 2 (index 1)
-                    rows_to_delete_sheet.append(cell.row)
-
-        if rows_to_delete_sheet:
-            # Sort rows in descending order to avoid index shifting issues during deletion
-            rows_to_delete_sheet.sort(reverse=True)
-            for row_num in rows_to_delete_sheet:
-                 try:
-                     sheet_data.delete_rows(row_num)
-                     print(f"Deleted row {row_num} from spreadsheet for {estate_name}-{division_number} on {date_str_format}")
-                 except Exception as delete_err:
-                     print(f"Error deleting row {row_num} from spreadsheet: {delete_err}")
-                     # Decide if you want to stop or continue if a deletion fails
-                     # return df # Example: Stop if deletion fails
-
-        else:
-            print(f"Data for {date_str_format} and estate {estate_name}-{division_number} not found in spreadsheet for deletion.")
+        delete_rain_data(date_to_remove, estate_name, division_number)
 
         return df.reset_index(drop=True) # Reset index after dropping rows
 
@@ -449,23 +607,21 @@ def remove_old_data(df, date_to_remove, estate_name, division_number):
         print(f"Error in remove_old_data: {e}")
         return df # Return original df on error
 
-
-
 # %% [markdown]
 #  ## 6. Core Logic - Rainfall & Water Balance
 
 # %%
-def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name, division_number):
-    """
-    Calculates rainfall metrics for a specific date and estate,
-    appends to the sheet (dd/mm/yyyy format), and returns the UPDATED ORIGINAL DataFrame.
-    Accumulation is for the 29 days *before* calc_date.
-    """
-    global sheet_data
+def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name, division_number, update=False):
 
-    if sheet_data is None:
-        messagebox.showerror("Error", "Koneksi ke Google Sheet DB belum siap.")
-        return df_original
+    # --- Load Initial Data ---
+    if (df_original is None) or df_original.empty:
+        print("Loading data...") # Feedback
+        df_original = load_estate_database(estate_name, division_number)
+        if df_original.empty:
+            messagebox.showerror("Startup Error", "Gagal memuat data.\nAplikasi akan ditutup.")
+            if root: root.destroy()
+            return
+        print("Data loaded successfully.") # Feedback
 
     try:
         # --- Input Validation & Date Conversion ---
@@ -498,48 +654,48 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name, divi
              print(f"Note: No data found for previous day {prev_day_date} for {estate_name} - {division_number}. Assuming SWR=0.")
 
         # --- Calculate Accumulation (29 days ENDING YESTERDAY) ---
-        start_window_date = calc_date - timedelta(days=29) # Start date is 29 days before calc_date
-        end_window_date = calc_date - timedelta(days=1)   # End date is *yesterday*
+        start_window_date = calc_date - timedelta(days=29)
+        end_window_date = calc_date - timedelta(days=1)
 
-        # Filter original df for the date window *up to the previous day* AND estate
+        # Filter original df_original for the date window *up to the previous day* AND estate
         window_df = df_original[
              (df_original['Estate'] == estate_name) &
              (df_original['Division'] == division_number) &
              (df_original['Date'].dt.date >= start_window_date) &
-             (df_original['Date'].dt.date <= end_window_date) # Include end_window_date (yesterday)
-        ].copy() # Use copy
+             (df_original['Date'].dt.date <= end_window_date)
+        ].copy()
 
         # Ensure rainfall column is numeric and fill NaNs
         window_df['Daily Rainfall (mm)'] = pd.to_numeric(window_df['Daily Rainfall (mm)'], errors='coerce').fillna(0)
 
         # --- FIX: Sum rainfall ONLY within the window (excluding current day's rainfall) ---
-        accumulation_rainfall = window_df['Daily Rainfall (mm)'].sum()
+        accumulation_rainfall = round(window_df['Daily Rainfall (mm)'].sum(), 1)
         # --- END FIX ---
 
         # --- Calculate Evapotranspiration ---
         # Logic depends on definition - using length of accumulation window here
-        days_in_acc_window = len(window_df) # How many actual days found in the period ending yesterday
+        days_in_acc_window = len(window_df)
         # Adjust evapotranspiration logic if needed based on how 'days in window' should be counted
-        evapotranspiration = (120 if days_in_acc_window >= 10 else 150) / 30 # Example: Adjust threshold if needed
+        evapotranspiration = (120 if days_in_acc_window >= 10 else 150) / 30
 
         # --- Calculate Water Balance & Reserves ---
         # Correctly uses current day's rainfall here
-        water_balance = previous_soil_water_reserve + daily_rainfall - evapotranspiration
-        soil_water_reserve = min(water_balance, 200)
+        water_balance = round((previous_soil_water_reserve + daily_rainfall - evapotranspiration), 1)
+        soil_water_reserve = round(min(water_balance, 200), 1)
         water_surplus = max(0, water_balance - 200)
 
         # --- Prepare Data for Sheet and DataFrame ---
-        date_str_sheet = calc_date.strftime('%d/%m/%Y') # Correct format for sheet
+        date_str_sheet = calc_date.strftime('%Y-%m-%d')
         new_row_values = [
-            date_str_sheet, estate_name, division_number, daily_rainfall, accumulation_rainfall, # Use updated accumulation
+            date_str_sheet, estate_name, division_number, daily_rainfall, accumulation_rainfall,
             evapotranspiration, water_balance, soil_water_reserve, water_surplus
         ]
         new_row_dict = {
-            'Date': pd.Timestamp(calc_date), # Use Timestamp for DataFrame
+            'Date': pd.Timestamp(calc_date),
             'Estate': estate_name,
             'Division': division_number,
             'Daily Rainfall (mm)': daily_rainfall,
-            'Accumulation Rainfall -29 days': accumulation_rainfall, # Use updated accumulation
+            'Accumulation Rainfall -29 days': accumulation_rainfall,
             'Evapotranspiration': evapotranspiration,
             'Water Balance': water_balance,
             'Soil Water Reserve (mm)': soil_water_reserve,
@@ -548,19 +704,23 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name, divi
 
         # --- Update Sheet and DataFrame ---
         try:
-            sheet_data.append_row(new_row_values)
-            print(f"Appended to Google Sheet: {new_row_values}")
+            if update:
+                update_rain_data(new_row_values)
+            else:
+                insert_rain_data(new_row_values)
+            
+            print(f"Appended to Database: {new_row_values}")
         except Exception as e:
-             messagebox.showerror("Sheet Error", f"Gagal menyimpan data ke Google Sheet: {e}")
-             print(f"Error appending to sheet: {e}")
-             return df_original # Don't update local df if sheet update fails
+             messagebox.showerror("Sheet Error", f"Gagal menyimpan data ke Database: {e}")
+             print(f"Error appending to database: {e}")
+             return df_original
 
         df_updated = pd.concat([df_original, pd.DataFrame([new_row_dict])], ignore_index=True)
         df_updated = df_updated.sort_values(by='Date').reset_index(drop=True)
         print(f"Successfully calculated and added data for {estate_name} - {division_number} on {date_str_sheet}")
         return df_updated
 
-    except ValueError as ve: # Catch specific validation errors
+    except ValueError as ve: 
         messagebox.showerror("Input Error", f"Gagal memproses data untuk {format_datetime(calc_date)}: {ve}")
         print(f"Validation Error in calculate_rainfall for {format_datetime(calc_date)}: {ve}")
         return df_original
@@ -572,19 +732,6 @@ def calculate_rainfall(df_original, calc_date, daily_rainfall, estate_name, divi
 
 # %% [markdown]
 #  ## 7. Core Logic - Fertilizer Rules & Validation
-
-# %%
-# (Keep functions: check_groundwater, check_peilscale, check_season,
-#  check_rain_in_dry_seasion, validate_water_track, get_minimal_interval,
-#  get_alternative_fertilizer, get_all_recommendation, validate_interval_fertilizer,
-#  get_fertilizer_group, validate_dry_week, validate_dolomite, analyze_fertilizer)
-# Ensure analyze_fertilizer uses the updated arguments if necessary and that
-# date objects (not strings) are passed where expected.
-
-# Example: Minor correction in analyze_fertilizer if needed
-# Make sure last_fertilizer_date and next_fertilizer_date are datetime objects
-# when calling validate_interval_fertilizer, get_alternative_fertilizer, etc.
-
 
 # %%
 def analyze_fertilizer(date_input, username, estate_name, division_number, blok_name, id_analisa, df, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date):
@@ -602,8 +749,8 @@ def analyze_fertilizer(date_input, username, estate_name, division_number, blok_
   available_dates = estate_df['Date'].dropna().sort_values().unique()
 
   # Get Today's and Yesterday's dates
-  today_date = current_time_date.date()
-  yesterday_date = yesterday_time_date.date()
+  today_date = current_time_date
+  yesterday_date = yesterday_time_date
   
   # Decide which date to use for rainfall
   if next_fertilizer_date.date() == today_date: # If next fertilizer date is today
@@ -629,14 +776,14 @@ def analyze_fertilizer(date_input, username, estate_name, division_number, blok_
   gap_days = (next_fertilizer_date.date() - last_available_date).days
   if gap_days >= 2:
       reason += f"Waktu curah hujan terakhir terlalu jauh dengan tanggal pemupukan selanjutnya. Terdapat {gap_days} hari kosong."
-      status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+      status = calculate_and_append_db(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
       return current_daily_rainfall, status, reason, recommendation
 
   #check if today's rainfall is greater than or equal to 60
   if current_daily_rainfall >= 60:
     reason = "Curah hujan lebih dari 60 mm, pemupukan dihentikan"
     print(reason)
-    status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+    status = calculate_and_append_db(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, 0, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
     return current_daily_rainfall, status, reason, recommendation
 
   #check the accumulated rainfall data
@@ -651,7 +798,7 @@ def analyze_fertilizer(date_input, username, estate_name, division_number, blok_
                print("Bulan basah & water surplus 0")
             else:
               reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
-              status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+              status = calculate_and_append_db(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
               recommendation = ""
               return current_daily_rainfall, status, reason, recommendation
         elif current_season == "Kering" and next_fertilizer in DRY_SEASON_ONLY:
@@ -659,13 +806,13 @@ def analyze_fertilizer(date_input, username, estate_name, division_number, blok_
         elif current_season == "Kering":
             reason = f"Tidak bisa melakukan pemupukan, karena musim {current_season}"
             recommendation = "Dolomite, RP, TSP"
-            status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, f"Pupuk alternatif yang disarankan: {recommendation}")
+            status = calculate_and_append_db(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, f"Pupuk alternatif yang disarankan: {recommendation}")
             return current_daily_rainfall, status, reason, recommendation      
 
     #Valdasi 2
     elif(not peilscale_factor):
       reason = "Tidak bisa melakukan pemupukan, karena peilscale di atas -51"
-      status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+      status = calculate_and_append_db(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
       recommendation = ""
       return current_daily_rainfall, status, reason, recommendation
     
@@ -678,7 +825,7 @@ def analyze_fertilizer(date_input, username, estate_name, division_number, blok_
              print("Bulan basah & water surplus 0")
              reason = ""
           else:
-            status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
+            status = calculate_and_append_db(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, "")
             recommendation = ""
             return current_daily_rainfall, status, reason, recommendation
       elif current_season == "Kering":
@@ -739,8 +886,8 @@ def analyze_fertilizer(date_input, username, estate_name, division_number, blok_
   if (len(Alternatives) != 0):
     recommendation = f"Pupuk alternatif yang disarankan: {alternative}"
 
-  # Append to spreadsheet
-  status = append_to_spreadsheet(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation)
+  # Append to database
+  status = calculate_and_append_db(date_input, username, estate_name, division_number, blok_name, id_analisa, current_daily_rainfall, peilscale, last_fertilizer, last_fertilizer_date, next_fertilizer, next_fertilizer_date, reason, recommendation)
 
   return current_daily_rainfall, status, reason, recommendation
 
@@ -753,12 +900,12 @@ def validate_dolomite(df, last_fertilizer, last_fertilizer_date, next_fertilizer
     return Alternatives  # Dolomite not allowed
 
   # 1. Check if the last Daily Rainfall (mm) is >= 60
-  last_daily_rainfall = df['Daily Rainfall (mm)'].iloc[-1]
+  last_daily_rainfall = df['Daily Rainfall (mm)'].iloc[0]
   if last_daily_rainfall >= 60:
     return Alternatives  # Dolomite not allowed
 
   # 2. Check if Accumulation Rainfall is >= 300
-  accumulation_rainfall = df['Accumulation Rainfall -29 days'].iloc[-1]
+  accumulation_rainfall = df['Accumulation Rainfall -29 days'].iloc[0]
   if accumulation_rainfall >= 300:
     return Alternatives  # Dolomite not allowed
 
@@ -777,8 +924,9 @@ def validate_dolomite(df, last_fertilizer, last_fertilizer_date, next_fertilizer
 
 # %%
 def validate_dry_week(df):
-  last_days = df['Daily Rainfall (mm)'].iloc[-7:]
-  print(f"last_days: {df.iloc[-7:]}")
+  print(f"[DEBUG] validate dry week, df: {df.head(7)}")
+  last_days = df['Daily Rainfall (mm)'].iloc[:7]
+  print(f"[DEBUG] last_days: {last_days}")
 
   no_rain = 0
   for i in last_days:
@@ -829,12 +977,13 @@ def check_rain_in_dry_seasion(daily_rainfall_last_7):
 
 # %%
 def validate_water_track(df, current_daily_rainfall, peilscale, next_fertilizer):
-  last_row = df.iloc[-1]
+  last_row = df.iloc[0]
+  print(f"last_row: {last_row}")
   accumulation_rainfall = last_row['Accumulation Rainfall -29 days']
   print(f"accumulation_rainfall: {accumulation_rainfall}")
   water_surplus = last_row['Water Surplus']
   print(f"water_surplus: {water_surplus}")
-  daily_rainfall_last_7 = df['Daily Rainfall (mm)'].iloc[-7:]
+  daily_rainfall_last_7 = df['Daily Rainfall (mm)'].iloc[:7]
   print(f"daily_rainfall_last_7: {daily_rainfall_last_7.tolist()}")
 
   # Syarat 1
@@ -950,17 +1099,9 @@ def get_date(entry_widget):
     top.wait_window(top)
 
 def hide_all_widgets():
-    """Hides ALL widgets gridded directly onto the root window."""
     if not root_exists: return
-    # Be more specific: Hide only widgets placed with grid on root
     for widget in root.grid_slaves():
          widget.grid_forget()
-    # Also forget frames that might contain other widgets if needed
-    # Example: if outer_frame exists and is a direct child
-    # try:
-    #     if 'outer_frame' in globals() and outer_frame:
-    #         outer_frame.grid_forget()
-    # except NameError: pass # If outer_frame was never created
 
 def hide_rainfall_data_entry_widgets(): # Make sure this is defined
     """Hides the widgets specifically for the rainfall data entry/update screen."""
@@ -978,17 +1119,8 @@ def hide_rainfall_data_entry_widgets(): # Make sure this is defined
         except (AttributeError, NameError, tk.TclError): # Catch potential errors if widget doesn't exist or is destroyed
             pass
 
-# Removed hide_estate_widgets as it seems redundant with hide_all_widgets strategy
-
-
 # %%
-def validate_rainfall_data_exists(selected_estate, selected_division):
-    """
-    Checks if rainfall data exists for the selected estate,
-    if there are no missing dates before today, and if today's data exists.
-    Returns True if all checks pass, False otherwise. Displays error messages.
-    """
-    global df, current_time_date # Need access to these globals
+def validate_rainfall_data_exists(df, selected_estate, selected_division, current_time_date):
 
     if not selected_estate:
         messagebox.showerror("Error", "Estate belum dipilih.")
@@ -1002,45 +1134,22 @@ def validate_rainfall_data_exists(selected_estate, selected_division):
     if selected_division not in DIVISION_OPTIONS:
          messagebox.showerror("Error", f"Nomor divisi invalid: '{selected_division}'.")
          return False
-
-    # --- Check current_time_date type ---
-    # Use the fully qualified class name datetime.datetime
-    if not isinstance(current_time_date, datetime.datetime):
-         messagebox.showerror("Internal Error", "Format tanggal tidak valid.")
-         print(f"DEBUG: Invalid current_time_date type: {type(current_time_date)}") # Debug print
-         return False
-    # --- End Check ---
-
-    # 2. Check for Missing Dates Before Today
-    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, selected_division, current_time_date)
+    
+    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, current_time_date)
 
     if total_missing_dates > 0:
-        # Format last_reported_time safely - it's already timezone-aware from get_missing_dates
         last_reported_str = format_datetime(last_reported_time.date()) if last_reported_time else "awal data"
         messagebox.showerror("Data Tidak Lengkap",
                              f"Terdapat {total_missing_dates} hari data hujan yang belum diinput untuk estate {selected_estate} - {selected_division} "
                              f"sejak {last_reported_str}.\n\n"
                              "Harap lengkapi data melalui menu 'Masukkan Data Hujan' → 'Masukkan Data Hujan Baru'")
         return False
-
-    # 3. Check for Today's Data (only if no missing dates before today)
-    today_date = current_time_date.date() # Get today's date part
-
-    # Ensure Date column is datetime before comparison
-    # This check might be redundant if load_database guarantees it, but safe to keep
-    if not pd.api.types.is_datetime64_any_dtype(df['Date']):
-         try:
-             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-             df.dropna(subset=['Date'], inplace=True) # Recalculate df if necessary
-         except Exception as e:
-             messagebox.showerror("Error", f"Gagal memproses kolom Tanggal: {e}")
-             return False
-
-    estate_data_today = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division) & (df['Date'].dt.date == today_date)]
+    
+    estate_data_today = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division) & (df['Date'] == current_time_date)]
 
     if estate_data_today.empty:
         messagebox.showerror("Data Tidak Lengkap",
-                             f"Data curah hujan untuk hari ini ({format_datetime(today_date)}) "
+                             f"Data curah hujan untuk hari ini ({current_time_date}) "
                              f"bagi estate {selected_estate} - {selected_division} belum dimasukkan.\n\n"
                              "Harap masukkan data hari ini melalui menu 'Masukkan Data Hujan'.")
         return False
@@ -1110,19 +1219,17 @@ def create_splash_screen():
 
     except FileNotFoundError:
          messagebox.showerror("Error", f"Splash image file not found: {image_path}")
-         # Optionally call start_main_app() immediately to bypass splash on error
          root.after(100, start_main_app) # Start app after short delay
     except Exception as e:
         messagebox.showerror("Splash Screen Error", f"Could not load splash screen: {e}")
         traceback.print_exc()
-        # Optionally call start_main_app() immediately to bypass splash on error
         root.after(100, start_main_app) # Start app after short delay
 
 
 # %%
 def start_main_app():
     """Destroys splash screen elements, loads data, and starts the main app."""
-    global splash_label, splash_button, root, df, sheet_data, sheet_output
+    global splash_label, splash_button, root, df, supadatabase
 
     if not root_exists: return # Exit if window closed prematurely
 
@@ -1132,36 +1239,12 @@ def start_main_app():
     if splash_button:
         splash_button.destroy()
 
-    # --- Connect to Google Sheets and Load Initial Data ---
-    # Moved here from main_process to avoid delay before splash shows
-    try:
-        print("Connecting to Google Sheets...") # Feedback
-        creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_PATH, SCOPE)
-        client = gspread.authorize(creds)
-        sheet_data = client.open_by_url(SHEET_URL).worksheet("DB")
-        sheet_output = client.open_by_url(SHEET_URL).worksheet("Output")
-        print("Successfully connected to Google Sheets.")
-    except Exception as e:
-        messagebox.showerror("Startup Error", f"Gagal terhubung ke Google Sheets: {e}\nAplikasi akan ditutup.")
-        if root: root.destroy()
-        return
-
-    # --- Load Initial Data ---
-    print("Loading initial data...") # Feedback
-    df = load_database(SHEET_URL, JSON_PATH) # load_database now gets sheet handles
-    if df.empty:
-        # load_database shows its own error, just ensure window closes
-        messagebox.showerror("Startup Error", "Gagal memuat data awal.\nAplikasi akan ditutup.")
-        if root: root.destroy()
-        return
-    print("Data loaded successfully.") # Feedback
-
     # --- Now create the main application widgets ---
     create_main_widgets()
 
 # %%
 def create_main_widgets():
-    global label_username, entry_username, previous_menu, current_menu, back_button, exit_button, button_input_hujan, button_analisa_pemupukan, username_var, label_saved_username, username, df # Add df
+    global label_username, entry_username, previous_menu, current_menu, back_button, exit_button, button_input_hujan, button_analisa_pemupukan, username_var, label_saved_username, username, df, supadatabase # Add df
 
     if not root_exists: return
     root.geometry("500x400")
@@ -1174,10 +1257,13 @@ def create_main_widgets():
     root.columnconfigure(1, weight=0)
     # --- END CONFIGURATION ---
 
+    if (supadatabase == None):
+        supadatabase = init_supabase()
+
     # Update the dataframe every time user access the main menu
-    df = load_database(SHEET_URL, JSON_PATH) # Use constants
+    df = load_initial_database()
     if df.empty:
-        messagebox.showerror("Error", "Gagal memuat data dari spreadsheet...")
+        messagebox.showerror("Error", "Gagal memuat data di awal\nAplikasi akan ditutup.")
         root.destroy()
         return
 
@@ -1428,18 +1514,17 @@ def show_ESTATE_OPTIONS():
     # --- ROW & COLUMN CONFIGURATION RESET ---
     for i in range(20): # Reset rows
         root.rowconfigure(i, weight=0)
-    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
-    root.columnconfigure(1, weight=0) # Reset unused columns
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0)
     # --- END CONFIGURATION ---
 
     hide_all_widgets()
 
     current_menu = "estate"
 
-    label_estate_option = tk.Label(root, text="Pilih estate (Inti/Plasma):", font=("Arial", 12))
+    label_estate_option = tk.Label(root, text=f"Pilih estate ({'/'.join(ESTATE_OPTIONS)}):", font=("Arial", 12))
     label_estate_option.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
-    ESTATE_OPTIONS = ["Inti", "Plasma"]
     combobox_estate = ttk.Combobox(root, values=ESTATE_OPTIONS, width=30, font=("Arial", 10))
     combobox_estate.grid(row=1, column=0, padx=10, pady=10)
 
@@ -1484,10 +1569,9 @@ def show_estate_options_for_analysis():
     current_menu = "estate_analysis"
 
     # --- Use sticky="ew" on ALL widgets ---
-    label_estate_option = tk.Label(root, text="Pilih estate (Inti/Plasma):", font=("Arial", 12))
+    label_estate_option = tk.Label(root, text=f"Pilih estate ({'/'.join(ESTATE_OPTIONS)}):", font=("Arial", 12))
     label_estate_option.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
 
-    ESTATE_OPTIONS = ["Inti", "Plasma"]
     combobox_estate = ttk.Combobox(root, values=ESTATE_OPTIONS, width=30, font=("Arial", 10))
     combobox_estate.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
     
@@ -1511,7 +1595,7 @@ def show_estate_options_for_analysis():
     entry_tanggal_rencana_pupuk.grid(row=7, column=0, padx=10, pady=5, sticky="ew")
 
     button_tanggal_rencana_pupuk = tk.Button(root, text="Select Date", command=lambda: get_date(entry_tanggal_rencana_pupuk), font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) #Added button and color
-    button_tanggal_rencana_pupuk.grid(row=7, column=1, padx=5, pady=5) # Place button next to entry
+    button_tanggal_rencana_pupuk.grid(row=7, column=1, padx=5, pady=5)
 
     label_tanggal_pupuk_terakhir = tk.Label(root, text="Masukkan tanggal pupuk terakhir:", font=("Arial", 12))
     label_tanggal_pupuk_terakhir.grid(row=8, column=0, padx=10, pady=5, sticky="ew")
@@ -1520,7 +1604,7 @@ def show_estate_options_for_analysis():
     entry_tanggal_pupuk_terakhir.grid(row=9, column=0, padx=10, pady=5, sticky="ew")
 
     button_tanggal_pupuk_terakhir = tk.Button(root, text="Select Date", command=lambda: get_date(entry_tanggal_pupuk_terakhir), font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) #Added button and color
-    button_tanggal_pupuk_terakhir.grid(row=9, column=1, padx=5, pady=5) # Place button next to entry
+    button_tanggal_pupuk_terakhir.grid(row=9, column=1, padx=5, pady=5)
 
     label_peilscale = tk.Label(root, text="Masukkan nilai Peilscale:", font=("Arial", 12))
     label_peilscale.grid(row=10, column=0, padx=10, pady=5, sticky="ew")
@@ -1575,10 +1659,9 @@ def show_ESTATE_OPTIONS_for_add_rainfall():
     root.columnconfigure(1, weight=0)
     # --- END ROOT RESET ---
 
-    label_estate_option = tk.Label(root, text="Pilih Estate (Inti/Plasma):", font=("Arial", 12))
+    label_estate_option = tk.Label(root, text=f"Pilih estate ({'/'.join(ESTATE_OPTIONS)}):", font=("Arial", 12))
     label_estate_option.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
 
-    ESTATE_OPTIONS = ["Inti", "Plasma"]
     combobox_estate = ttk.Combobox(root, values=ESTATE_OPTIONS, width=30, font=("Arial", 10))
     combobox_estate.grid(row=1, column=0, padx=10, pady=10)
 
@@ -1603,42 +1686,59 @@ def show_ESTATE_OPTIONS_for_add_rainfall():
 
 # %%
 def show_rainfall_data_entry(selected_estate, selected_division):
-    """Displays the rainfall data entry fields, pre-populated with the last entry."""
     global previous_menu, entry_update_rainfall, label_update_rainfall, back_button, main_menu_button, submit_update_rainfall_button, df
 
     if not root_exists:
         return
+    
+    # --- Load Initial Data ---
+    try:
+        print("Loading data...")
+        df = load_estate_database(selected_estate, selected_division)
+        # messagebox.showinfo("DEBUG", f"df: {df}")
+
+        if df.empty:
+            messagebox.showerror("Startup Error", "Gagal memuat data.\nAplikasi akan ditutup.")
+            if root: root.destroy()
+            return
+        print("Data loaded successfully.")
+        # messagebox.showinfo("DEBUG", f"Data loaded successfully")
+    except Exception as e:
+        messagebox.showerror("Startup Error", f"Connection to {TARGET_ENVIRONMENT} DB failed!\nReason: {e}")
 
     hide_all_widgets()
 
     previous_menu = "estate"
 
-    estate_data = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division)]
+    print(f"show_rainfall_data_entry df.head():\n{df.head(1)}")
+    estate_data = df
+    # messagebox.showinfo("DEBUG", f"estate_data: {estate_data}")
 
     if not estate_data.empty: 
-        last_date = estate_data['Date'].iloc[-1] 
-        last_rainfall = estate_data['Daily Rainfall (mm)'].iloc[-1]
+        last_date = estate_data['Date'].iloc[0] 
+        last_rainfall = estate_data['Daily Rainfall (mm)'].iloc[0]
 
-        label_update_rainfall = tk.Label(root, text=f"Update Data Hujan Untuk {selected_estate}-{selected_division} Pada Tanggal {format_datetime(last_date)} (mm):", font=("Arial", 12))
+        label_update_rainfall = tk.Label(root, text=f"Update Data Hujan (mm)", font=("Arial", 12, "bold"))
         label_update_rainfall.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+
+        label_update_rainfall = tk.Label(root, text=f"Untuk {selected_estate} - {selected_division} Pada Tanggal {last_date}:", font=("Arial", 12))
+        label_update_rainfall.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
 
         entry_update_rainfall = tk.Entry(root, font=("Arial", 10))
         entry_update_rainfall.insert(0, str(last_rainfall))  
-        entry_update_rainfall.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
+        entry_update_rainfall.grid(row=4, column=0, padx=10, pady=10, sticky="ew")
 
         submit_update_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_update_rainfall(selected_estate, selected_division, last_date, entry_update_rainfall.get()), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
-        submit_update_rainfall_button.grid(row=4, column=0, padx=10, pady=10)
+        submit_update_rainfall_button.grid(row=5, column=0, padx=10, pady=10)
 
         back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
-        back_button.grid(row=5, column=0, padx=10, pady=10)
+        back_button.grid(row=6, column=0, padx=10, pady=10)
 
         main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=MAIN_MENU_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
-        main_menu_button.grid(row=6, column=0, padx=10, pady=10)
+        main_menu_button.grid(row=7, column=0, padx=10, pady=10)
 
         root.columnconfigure(0, weight=1)
-
     else:
-        # Handle the case where there's no data for the selected estate.
         label_no_data = tk.Label(root, text=f"No rainfall data found for {selected_estate}.", font=("Arial", 12))
         label_no_data.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
@@ -1647,15 +1747,14 @@ def show_rainfall_data_entry(selected_estate, selected_division):
 
         main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=MAIN_MENU_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR) # set color
         main_menu_button.grid(row=4, column=0, padx=10, pady=10)
-        root.columnconfigure(0, weight=1)
 
+        root.columnconfigure(0, weight=1)
 
 # %%
 def show_add_rainfall_entry(selected_estate, selected_division, date):
-    """Displays the screen to add new rainfall data."""
-    global entry_daily_rainfall, label_daily_rainfall, submit_add_rainfall_button, previous_menu # Added previous_menu
+    global entry_daily_rainfall, label_daily_rainfall, submit_add_rainfall_button, previous_menu
 
-    if not root_exists: return # Added check
+    if not root_exists: return
 
     # --- ROW & COLUMN RESET for ROOT ---
     for i in range(20): root.rowconfigure(i, weight=0)
@@ -1664,33 +1763,31 @@ def show_add_rainfall_entry(selected_estate, selected_division, date):
     # --- END ROOT RESET ---
 
     hide_all_widgets()
-    # Make sure previous_menu is set correctly before calling this function
-    # If coming from submit_missing_dates, previous_menu should ideally be set
-    # to 'missing_dates_input' or similar before calling this.
-    # Let's set it here for now if it wasn't set properly before.
-    previous_menu = "missing_dates_input" # Or adjust based on actual flow
+    previous_menu = "missing_dates_input"
 
     # --- COLUMN CONFIGURATION (Add Reset for Column 1) ---
     root.columnconfigure(0, weight=1)
-    root.columnconfigure(1, weight=0) # <<< ADD THIS LINE
+    root.columnconfigure(1, weight=0)
     # --- END COLUMN CONFIGURATION ---
 
     # --- FIX THE LABEL TEXT ---
-    label_daily_rainfall = tk.Label(root, text=f"Masukkan Data Hujan (mm) untuk {selected_estate} pada tanggal {format_datetime(date)}:", font=("Arial", 12))
-    label_daily_rainfall.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+    label_input_rainfall = tk.Label(root, text=f"Data Hujan (mm) Baru", font=("Arial", 12, "bold"))
+    label_input_rainfall.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+
+    label_daily_rainfall = tk.Label(root, text=f"{selected_estate} - {selected_division} pada tanggal {date}", font=("Arial", 12))
+    label_daily_rainfall.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
 
     entry_daily_rainfall = tk.Entry(root, font=("Arial", 10))
-    entry_daily_rainfall.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
+    entry_daily_rainfall.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
-    # Pass the correct 'date' (which is datetime.date) to the submit function
     submit_add_rainfall_button = tk.Button(root, text="Submit Rainfall", command=lambda: submit_estate_for_add_rainfall(selected_estate, selected_division, date, entry_daily_rainfall.get()), font=("Arial", 10), bg=PRIMARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
-    submit_add_rainfall_button.grid(row=2, column=0, padx=10, pady=10)
+    submit_add_rainfall_button.grid(row=3, column=0, padx=10, pady=10)
 
     back_button = tk.Button(root, text="Back", command=go_back, font=("Arial", 10), bg=SECONDARY_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
-    back_button.grid(row=3, column=0, padx=10, pady=10)
+    back_button.grid(row=4, column=0, padx=10, pady=10)
 
     main_menu_button = tk.Button(root, text="Back to Main Menu", command=back_to_main, font=("Arial", 10), bg=MAIN_MENU_BUTTON_COLOR, fg=BUTTON_TEXT_COLOR)
-    main_menu_button.grid(row=4, column=0, padx=10, pady=10)
+    main_menu_button.grid(row=5, column=0, padx=10, pady=10)
     root.columnconfigure(0, weight=1)
 
 
@@ -1698,16 +1795,26 @@ def show_add_rainfall_entry(selected_estate, selected_division, date):
 #  ## 10. GUI - Navigation & Action Functions
 
 # %%
-# Make corrections to submit_analysis date handling:
 def submit_analysis(selected_estate, selected_division, blok, peilscale,
-                    jenis_pupuk_terakhir, tanggal_pupuk_terakhir_str, # Renamed for clarity
-                    rencana_jenis_pupuk, tanggal_rencana_pupuk_str): # Renamed for clarity
-    global df, current_time_date, username_var # Added username_var
+                    jenis_pupuk_terakhir, tanggal_pupuk_terakhir_str,
+                    rencana_jenis_pupuk, tanggal_rencana_pupuk_str):
+    global df, username_var
 
     if not root_exists: return
 
+    # --- Load Initial Data ---
+    try:
+        print("Loading data...") # Feedback
+        df = load_estate_database(selected_estate, selected_division)
+        if df.empty:
+            messagebox.showerror("Startup Error", "Gagal memuat data.\nAplikasi akan ditutup.")
+            if root: root.destroy()
+            return
+        print("Data loaded successfully.") # Feedback
+    except Exception as e:
+        messagebox.showerror("Startup Error", f"Connection to {TARGET_ENVIRONMENT} DB failed!\nReason: {e}")
+
     # --- Basic Input Validation ---
-    # (Keep all the initial checks for empty strings, valid estate etc.)
     if not selected_estate: messagebox.showerror("Error", "Tolong masukkan nama estate."); return
     if selected_estate not in ESTATE_OPTIONS: messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'."); return
     if not selected_division: messagebox.showerror("Error", "Tolong masukkan nomor divisi."); return
@@ -1729,30 +1836,21 @@ def submit_analysis(selected_estate, selected_division, blok, peilscale,
         try:
              tanggal_rencana_pupuk_dt = datetime.datetime.strptime(tanggal_rencana_pupuk_str, "%d/%m/%Y")
              tanggal_pupuk_terakhir_dt = datetime.datetime.strptime(tanggal_pupuk_terakhir_str, "%d/%m/%Y")
-             # If manual format is okay, maybe warn user about preferred format?
         except ValueError:
              messagebox.showerror("Error", "Format tanggal tidak valid. Gunakan kalender atau format YYYY-MM-DD.")
              return
 
     try:
-        peilscale_int = int(peilscale) # Keep original peilscale string for display if needed
+        peilscale_int = int(peilscale)
     except ValueError:
         messagebox.showerror("Error", "Nilai peilscale harus berupa angka integer.")
         return
-
-    # --- Username Check ---
-    username = username_var.get()
-    if not username.strip():
-        messagebox.showerror("Error", "Tolong masukkan username di dalam main menu.")
-        return
     
     # --- Duplicate Data Check ---
-    estate_df = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division)]
-    duplicate_rows = estate_df[estate_df.duplicated(subset=['Date'], keep=False)]
+    duplicate_rows = df[df.duplicated(subset=['Date'], keep=False)]
 
     if not duplicate_rows.empty:
         # Find the dates that occur multiple times
-        duplicate_rows['Date'] = duplicate_rows['Date'].dt.date
         duplicate_dates = duplicate_rows['Date'].value_counts()
         duplicate_dates_multiple = duplicate_dates[duplicate_dates > 1]
         
@@ -1763,10 +1861,9 @@ def submit_analysis(selected_estate, selected_division, blok, peilscale,
     else:
         print("No duplicate rows found.")
 
-    # Checkpoint
     # --- Missing Data Check (Full Range) ---
-    estate_df['Date'] = pd.to_datetime(estate_df['Date'], errors='coerce').dt.date
-    available_dates = set(estate_df['Date'].dropna())
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
+    available_dates = set(df['Date'].dropna())
 
     # Define full date range from first date in data up to one day before the planned date
     start_date = min(available_dates)
@@ -1785,7 +1882,7 @@ def submit_analysis(selected_estate, selected_division, blok, peilscale,
         return
 
     # --- Rainfall Data Validation ---
-    if not validate_rainfall_data_exists(selected_estate, selected_division):
+    if not validate_rainfall_data_exists(df, selected_estate, selected_division, current_time_date):
         return # Exit if rainfall validation fails
     
     # Create ID Analisa
@@ -1800,14 +1897,15 @@ def submit_analysis(selected_estate, selected_division, blok, peilscale,
         rencana_jenis_pupuk, tanggal_rencana_pupuk_dt # Pass datetime object
     )
 
+    if recommendation is None:
+        recommendation = "Tidak ada rekomendasi yang tersedia."
+
     # Display the results - Pass strings for display as they were entered/selected
     display_analysis_results(
         selected_estate, selected_division, blok, tanggal_rencana_pupuk_str, peilscale, # Pass original peilscale string
         tanggal_pupuk_terakhir_str, jenis_pupuk_terakhir, rencana_jenis_pupuk,
         username, current_daily_rainfall, status, id_analisa, reason, recommendation
     )
-
-
 
 # %%
 def submit_missing_dates(selected_estate, selected_division, missing_dates_list):
@@ -1939,7 +2037,7 @@ def show_success_window():
 
 # %%
 def submit_update_rainfall(selected_estate, selected_division, date, new_rainfall):
-    """Submits the updated rainfall data to the spreadsheet."""
+    """Submits the updated rainfall data to the database."""
     global previous_menu, df, entry_update_rainfall
     if not root_exists:
         return
@@ -1952,14 +2050,10 @@ def submit_update_rainfall(selected_estate, selected_division, date, new_rainfal
         tk.messagebox.showerror("Error", "Nilai curah hujan invalid. Tolong masukkan bilangan positif.")
         return
     
-    # Remove the old data
-    df = remove_old_data(df, date, selected_estate, selected_division)
-
     # Recalculate dependent columns using calculate_rainfall
-    df = calculate_rainfall(df, date, new_rainfall, selected_estate, selected_division)
+    df = calculate_rainfall(df, date, new_rainfall, selected_estate, selected_division, update=True)
 
     show_success_window()
-
 
 # %%
 def submit_estate_for_add_rainfall(selected_estate, selected_division, date, new_rainfall):
@@ -1968,7 +2062,6 @@ def submit_estate_for_add_rainfall(selected_estate, selected_division, date, new
     if not root_exists:
         return
     
-    ESTATE_OPTIONS = ["Inti", "Plasma"]
     if selected_estate not in ESTATE_OPTIONS:
         tk.messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(ESTATE_OPTIONS)}")
         return
@@ -1981,7 +2074,7 @@ def submit_estate_for_add_rainfall(selected_estate, selected_division, date, new
     try:
         new_rainfall = float(new_rainfall)
         if new_rainfall < 0:
-            raise ValueError("Rainfall cannot be negative.")
+            raise ValueError("Nilai curah hujan tidak boleh negatif.")
     except ValueError:
         tk.messagebox.showerror("Error", "Nilai curah hujan invalid. Tolong masukkan bilangan positif.")
         return
@@ -1997,9 +2090,23 @@ def check_existing_rainfall(selected_estate, selected_division, current_time_dat
 
     if not root_exists:
         return
+    
+    # --- Load Initial Data ---
+    try:
+        # messagebox.showinfo("DEBUG", f"Loading data based on {selected_estate} - {selected_division}.")
+        print(f"Loading data based on {selected_estate} - {selected_division}.") # Feedback
+        df = load_estate_database(selected_estate, selected_division)
+        if df.empty:
+            messagebox.showerror("Startup Error", "Gagal memuat data.\nAplikasi akan ditutup.")
+            if root: root.destroy()
+            return
+        print("Data loaded successfully.") # Feedback
+        # messagebox.showinfo("DEBUG", f"Loading data based on {selected_estate} - {selected_division} success.")
+    except Exception as e:
+        messagebox.showerror("Startup Error", f"Connection to {TARGET_ENVIRONMENT} DB failed!\nReason: {e}")
+
 
     # --- Input Validation ---
-    ESTATE_OPTIONS = ["Inti", "Plasma"]
     if not selected_estate:
         messagebox.showerror("Error", "Silakan pilih estate terlebih dahulu.")
         return
@@ -2016,7 +2123,9 @@ def check_existing_rainfall(selected_estate, selected_division, current_time_dat
         return
 
     # --- Check for Missing Dates FIRST ---
-    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, selected_estate, selected_division, current_time_date)
+    # messagebox.showinfo("DEBUG", f"Getting missing dates for {selected_estate} - {selected_division}.")
+    missing_dates, last_reported_time, total_missing_dates = get_missing_dates(df, current_time_date)
+    # messagebox.showinfo("DEBUG", f"Getting missing dates for {selected_estate} - {selected_division}. Done.")
 
     print(f"Checking estate: {selected_estate}, divisi: {selected_division}") # Debug
     print(f"Last reported: {last_reported_time}, Missing: {total_missing_dates}") # Debug
@@ -2033,33 +2142,20 @@ def check_existing_rainfall(selected_estate, selected_division, current_time_dat
     else:
         # --- No Missing Dates, Check Today's Data ---
         print("No missing dates found. Checking today's data.") # Debug
-        today_date = current_time_date.date() # Use date object for comparison
-        # Ensure 'Date' column in df is datetime type before comparison
-        if not pd.api.types.is_datetime64_any_dtype(df['Date']):
-             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-
-        estate_data_today = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division) & (df['Date'].dt.date == today_date)]
+        estate_data_today = df[(df['Estate'] == selected_estate) & (df['Division'] == selected_division) & (df['Date'] == current_time_date)]
 
         if estate_data_today.empty:
             # --- Today's Data Missing: Show Input Screen for Today ---
             print("Today's data not found. Showing add rainfall entry.") # Debug
-            # hide_estate_widgets() # hide_all_widgets is called in show_add_rainfall_entry
-            show_add_rainfall_entry(selected_estate, selected_division, today_date)
-            previous_menu = "estate_add_rainfall" # Came from estate selection
+            show_add_rainfall_entry(selected_estate, selected_division, current_time_date)
+            previous_menu = "estate_add_rainfall"
         else:
             # --- Today's Data Exists ---
             print("Today's data already exists.") # Debug
-            estate_rainfall_today = df['Daily Rainfall (mm)'].iloc[-1]
-            # hide_estate_widgets() # hide_all_widgets is called later if needed
-            messagebox.showinfo("Info", f"Data hujan untuk estate {selected_estate}, divisi {selected_division} pada hari ini ({format_datetime(today_date)}) sudah dimasukkan sebesar {estate_rainfall_today}."
+            estate_rainfall_today = df['Daily Rainfall (mm)'].iloc[0]
+            messagebox.showinfo("Info", f"Data hujan untuk estate {selected_estate}, divisi {selected_division} pada hari ini ({format_datetime(current_time_date)}) sudah dimasukkan sebesar {estate_rainfall_today}."
                                 "\nSilahkan update data melalui menu 'Masukkan Data Hujan' → 'Update Data Hujan Terakhir' ")
-            # Decide where to go now - maybe back to main menu or rainfall options?
-            back_to_main() # Or show_rainfall_options()
-            # Alternatively, you could offer to go to the 'Update' screen:
-            # print("Going to update screen as today's data exists.")
-            # show_rainfall_data_entry(selected_estate)
-            # previous_menu = "estate_add_rainfall" # Or adjust as needed
-
+            back_to_main()
 
 # %%
 def go_back():
@@ -2124,7 +2220,6 @@ def submit_estate_for_analysis(selected_estate, nama_blok, peilscale, jenis_tera
     if not root_exists:
         return
     
-    ESTATE_OPTIONS = ["Inti", "Plasma"]
     if selected_estate not in ESTATE_OPTIONS:
         tk.messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(ESTATE_OPTIONS)}")
         return
@@ -2145,6 +2240,9 @@ def submit_estate_for_analysis(selected_estate, nama_blok, peilscale, jenis_tera
 
     current_daily_rainfall, status, reason, recommendation = analyze_fertilizer(date_input, username, selected_estate, nama_blok, id_analisa, df, peilscale, jenis_terakhir, tanggal_terakhir, rencana_jenis, tanggal_rencana)
 
+    if recommendation is None:
+        recommendation = "Tidak ada rekomendasi yang tersedia."
+
     # Display the results
     display_analysis_results(
         selected_estate, nama_blok, tanggal_rencana, peilscale, tanggal_terakhir,
@@ -2156,11 +2254,10 @@ def submit_estate_for_analysis(selected_estate, nama_blok, peilscale, jenis_tera
 
 # %%
 def submit_estate(selected_estate, selected_division):
-    global previous_menu
+    global previous_menu, df
     if not root_exists:
         return
     
-    ESTATE_OPTIONS = ["Inti", "Plasma"]
     if selected_estate not in ESTATE_OPTIONS:
         tk.messagebox.showerror("Error", f"Nama estate invalid: '{selected_estate}'. Tolong pilih antara: {', '.join(ESTATE_OPTIONS)}")
         return
@@ -2172,6 +2269,7 @@ def submit_estate(selected_estate, selected_division):
 
     print(f"Selected Estate: {selected_estate}")
     print(f"Selected Division: {selected_division}")
+    
     show_rainfall_data_entry(selected_estate, selected_division)
 
 
@@ -2183,8 +2281,8 @@ def goto_input_hujan():
     # --- ROW & COLUMN CONFIGURATION RESET ---
     for i in range(20): # Reset rows
         root.rowconfigure(i, weight=0)
-    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
-    root.columnconfigure(1, weight=0) # Reset unused columns
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0)
     # --- END CONFIGURATION ---
 
     # Check username for the first time
@@ -2206,8 +2304,8 @@ def goto_analisa_pemupukan():
     # --- ROW & COLUMN CONFIGURATION RESET ---
     for i in range(20): # Reset rows
         root.rowconfigure(i, weight=0)
-    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
-    root.columnconfigure(1, weight=0) # Reset unused columns
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0)
     # --- END CONFIGURATION ---
 
     # Check username for the first time
@@ -2220,7 +2318,6 @@ def goto_analisa_pemupukan():
     hide_all_widgets()
     show_estate_options_for_analysis()
 
-
 # %%
 def goto_update_rainfall():
     global previous_menu
@@ -2230,12 +2327,13 @@ def goto_update_rainfall():
     # --- ROW & COLUMN CONFIGURATION RESET ---
     for i in range(20): # Reset rows
         root.rowconfigure(i, weight=0)
-    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
-    root.columnconfigure(1, weight=0) # Reset unused columns
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0)
     # --- END CONFIGURATION ---
     
     print(f"Selected Rainfall Option: Update Data Hujan Terakhir")
     previous_menu = "rainfall"
+
     show_ESTATE_OPTIONS()
 
 
@@ -2248,11 +2346,12 @@ def goto_add_rainfall():
     # --- ROW & COLUMN CONFIGURATION RESET ---
     for i in range(20): # Reset rows
         root.rowconfigure(i, weight=0)
-    root.columnconfigure(0, weight=1) # Configure columns needed by THIS screen
-    root.columnconfigure(1, weight=0) # Reset unused columns
+    root.columnconfigure(0, weight=1)
+    root.columnconfigure(1, weight=0)
     # --- END CONFIGURATION ---
     
     print(f"Selected Rainfall Option: Masukkan Data Hujan Baru")
+
     show_ESTATE_OPTIONS_for_add_rainfall()
 
 
@@ -2263,15 +2362,8 @@ def goto_add_rainfall():
 def on_closing():
     global root_exists
     root_exists = False
-    disable_buttons()
-    if root: # Check if root exists before destroying
+    if root:
        root.destroy()
-
-def disable_buttons():
-    """Disables all interactive buttons to prevent further events."""
-    # Keep this function as is, it's robust.
-    # ... (Your existing disable_buttons code) ...
-
 
 # %% [markdown]
 #  ## 12. Main Application (`main_process`)
@@ -2281,7 +2373,7 @@ def main_process():
     # Define all globals used within this function and others it calls
     global root, previous_menu, root_exists, current_menu, df, \
            username_var, username, \
-           sheet_data, sheet_output, \
+           rain_data, output_data, \
            label_username, entry_username, exit_button, label_rainfall_option, \
            button_update_rainfall, button_add_rainfall, back_button, \
            label_estate_option, combobox_estate, submit_estate_button, \
@@ -2305,7 +2397,7 @@ def main_process():
 
     # --- Initialize App ---
     root = tk.Tk()
-    root.title("Engine Waktu Aplikasi Pemupukan (TDK)")
+    root.title("Engine Waktu Aplikasi Pemupukan ({TARGET_ENVIRONMENT})")
     root.attributes('-fullscreen', True)
 
     # --- Initialize State Variables ---
@@ -2374,27 +2466,7 @@ def main_process():
     submit_missing_dates_button = None
     splash_label = None
     splash_button = None
-
-    # --- Connect to Google Sheets ---
-    try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_PATH, SCOPE)
-        client = gspread.authorize(creds)
-        sheet_data = client.open_by_url(SHEET_URL).worksheet("DB")
-        sheet_output = client.open_by_url(SHEET_URL).worksheet("Output")
-        print("Successfully connected to Google Sheets.")
-    except Exception as e:
-        messagebox.showerror("Startup Error", f"Gagal terhubung ke Google Sheets: {e}")
-        root.destroy()
-        return
-
-    # --- Load Initial Data ---
-    df = load_database(SHEET_URL, JSON_PATH) # load_database now gets sheet handles
-    if df.empty:
-        # load_database shows its own error, just ensure window closes
-        messagebox.showerror("Startup Error", "Gagal memuat data awal. Aplikasi akan ditutup.")
-        root.destroy()
-        return
-
+    
     # --- Setup Window Closing Protocol ---
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.columnconfigure(0, weight=1) # Configure root column initially
@@ -2406,22 +2478,11 @@ def main_process():
     root.iconbitmap(resource_path("Logo_Pancaran_Agro-removebg-preview.ico"))  # Make sure the path is correct
     root.mainloop()
 
-
 # %% [markdown]
 #  ## 13. Execution Block
 
 # %%
 if __name__ == "__main__":
-    # Any setup required before starting the process
-    # (like checking for credential file existence maybe)
-    if not os.path.exists(JSON_PATH):
-         print(f"ERROR: Credential file not found at {JSON_PATH}")
-         # Optionally show a Tkinter error box even before root is created
-         # temp_root = tk.Tk(); temp_root.withdraw() # Hide temp root
-         # messagebox.showerror("Startup Error", f"Credential file missing:\n{JSON_PATH}")
-         # temp_root.destroy()
-         sys.exit("Credential file missing.") # Exit if critical file missing
-
     main_process()
 
 
